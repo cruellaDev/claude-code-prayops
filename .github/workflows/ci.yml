@@ -34,8 +34,9 @@ jobs:
 
       - run: go vet ./...
 
-      # Covers the plugin structure, contracts, runtime, and the bootstrap
-      # installer against a local release server.
+      # Covers the plugin structure, contracts, runtime, the bootstrap
+      # installer against a local release server, and the privacy fixtures
+      # that drive the real binary and read back everything it wrote.
       - run: go test ./...
 
       - run: go test -race ./...
