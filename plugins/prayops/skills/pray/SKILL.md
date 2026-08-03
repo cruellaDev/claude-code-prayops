@@ -8,7 +8,10 @@ Send one prayer effect.
 
 1. Ensure the runtime exists by running:
    `"${CLAUDE_PLUGIN_ROOT}/scripts/ensure-runtime.sh"`
-2. If installation or update is required, show the user what will be installed and obtain confirmation.
+   Exit 0 means the runtime is ready. Exit 10 means it printed an installation plan and installed nothing.
+2. On exit 10, show the printed plan to the user and ask whether to install. Only after they agree, run:
+   `"${CLAUDE_PLUGIN_ROOT}/scripts/ensure-runtime.sh" --yes`
+   If the user declines, do not send the prayer - say it was not sent and that `/prayops:setup` can install the runtime later.
 3. With no argument:
    `"${CLAUDE_PLUGIN_DATA}/bin/prayops" pray --host claude --cwd "${CLAUDE_PROJECT_DIR}" --preset deploy`
 4. With text:

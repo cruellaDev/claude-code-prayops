@@ -8,11 +8,15 @@ Set up PrayOps explicitly.
 
 1. Run:
    `"${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh"`
-2. Before executing network installation, show the user the runtime version, OS/architecture, GitHub Release source, install location, and SHA-256 verification.
-3. Do not install silently.
-4. After installation, run:
+   This installs nothing. It prints the installation plan and exits 10 when consent is still needed, or exits 0 when the runtime is already up to date.
+2. Show the printed plan to the user - runtime version, OS/architecture, GitHub Release source, asset, install location, and SHA-256 verification - and ask whether to proceed.
+3. Only after the user agrees, run:
+   `"${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" --yes`
+   Never pass `--yes` before the user has seen the plan and agreed.
+4. If it fails, report the exit code meaning rather than retrying: 11 unsupported platform, 12 missing curl/wget or sha256 tool, 13 checksum mismatch, 14 rejected archive, 15 smoke test failure, 17 another setup running. In every one of these cases nothing was installed and any existing runtime is untouched.
+5. After installation, run:
    `"${CLAUDE_PLUGIN_DATA}/bin/prayops" doctor`
-5. Ask separately whether to configure:
+6. Ask separately whether to configure:
    - compact Claude Code status line
    - optional `/pray` alias
-6. Never overwrite an existing status line or alias without backup and confirmation.
+7. Never overwrite an existing status line or alias without backup and confirmation.

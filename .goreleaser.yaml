@@ -23,6 +23,9 @@ archives:
   - id: default
     formats: [tar.gz]
     name_template: "prayops_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # The bootstrap rejects any archive entry other than the binary, so keep
+    # GoReleaser from adding its default readme/license files.
+    files: []
 
 checksum:
   name_template: checksums.txt
