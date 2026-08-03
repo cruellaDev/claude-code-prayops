@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cruellaDev/claude-code-prayops/contracts"
+	"github.com/mattn/go-runewidth"
 )
 
 // BurnDuration is how long one stick of incense lasts. It is the scale for the
@@ -152,27 +153,13 @@ func colorize(line string, phase contracts.SessionPhase, color bool) string {
 	return tone + line + ansiReset
 }
 
-// width counts terminal cells. The only wide runes this package emits are the
-// two CJK glyphs above, so a full width table is not needed yet - the TUI,
-// which renders user text, will need one.
-func width(s string) int {
-	cells := 0
-	for _, r := range s {
-		if r >= 0x1100 && (r <= 0x115F ||
-			r == 0x2329 || r == 0x232A ||
-			(r >= 0x2E80 && r <= 0xA4CF && r != 0x303F) ||
-			(r >= 0xAC00 && r <= 0xD7A3) ||
-			(r >= 0xF900 && r <= 0xFAFF) ||
-			(r >= 0xFE30 && r <= 0xFE6F) ||
-			(r >= 0xFF00 && r <= 0xFF60) ||
-			(r >= 0xFFE0 && r <= 0xFFE6)) {
-			cells += 2
-			continue
-		}
-		cells++
-	}
-	return cells
-}
+// width counts terminal cells, treating East Asian ambiguous runes as one.
+//
+// The condition is pinned rather than detected: box drawing and similar
+// ambiguous runes would otherwise change width with the user's locale.
+func width(s string) int { return narrow.StringWidth(s) }
+
+var narrow = &runewidth.Condition{EastAsianWidth: false}
 
 // Width is exported for tests that assert the compact threshold.
 func Width(s string) int { return width(s) }

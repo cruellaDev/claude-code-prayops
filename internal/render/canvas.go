@@ -1,0 +1,169 @@
+// Package render draws the altar. It produces plain strings and knows nothing
+// about Bubble Tea, so every frame can be asserted in a test.
+package render
+
+import (
+	"strings"
+
+	"github.com/mattn/go-runewidth"
+)
+
+// Canvas is a fixed grid of terminal cells.
+//
+// Wide runes occupy two cells: the rune itself and a continuation cell that
+// renders as nothing. Without that bookkeeping a CJK glyph would push
+// everything after it one column right and tear the border.
+type Canvas struct {
+	width  int
+	height int
+	cells  []rune
+}
+
+// continuation marks the second cell of a wide rune.
+const continuation rune = 0
+
+// width treats East Asian ambiguous runes as one cell.
+//
+// Box drawing characters are ambiguous, so with the default condition their
+// width follows the user's locale: on a Korean or Japanese system every ─ and
+// │ would claim two cells and overwrite its neighbour, erasing the frame.
+// Terminals draw them in one cell, so the condition is pinned rather than
+// detected. Hangul and Han are unambiguously wide and are unaffected.
+var narrow = &runewidth.Condition{EastAsianWidth: false}
+
+// NewCanvas returns a canvas filled with spaces.
+func NewCanvas(width, height int) *Canvas {
+	if width < 0 {
+		width = 0
+	}
+	if height < 0 {
+		height = 0
+	}
+
+	c := &Canvas{width: width, height: height, cells: make([]rune, width*height)}
+	for i := range c.cells {
+		c.cells[i] = ' '
+	}
+	return c
+}
+
+func (c *Canvas) inside(x, y int) bool {
+	return x >= 0 && y >= 0 && x < c.width && y < c.height
+}
+
+// Set writes one rune. Out of bounds writes are dropped rather than panicking,
+// because layout arithmetic at the edge of a resize is not worth crashing a
+// watcher over.
+func (c *Canvas) Set(x, y int, r rune) {
+	if !c.inside(x, y) {
+		return
+	}
+
+	// Overwriting the first half of a wide rune would leave its orphaned
+	// continuation behind, so clear the pair first.
+	c.clearPairAt(x, y)
+
+	cells := narrow.RuneWidth(r)
+	if cells <= 0 {
+		return
+	}
+	if cells == 2 {
+		if !c.inside(x+1, y) {
+			// No room for the second half; drop it rather than render half a
+			// glyph over the border.
+			return
+		}
+		c.clearPairAt(x+1, y)
+		c.cells[y*c.width+x] = r
+		c.cells[y*c.width+x+1] = continuation
+		return
+	}
+	c.cells[y*c.width+x] = r
+}
+
+// clearPairAt blanks the cell at x and whichever half of a wide rune it
+// belongs to.
+func (c *Canvas) clearPairAt(x, y int) {
+	if !c.inside(x, y) {
+		return
+	}
+	index := y*c.width + x
+
+	if c.cells[index] == continuation {
+		if x > 0 {
+			c.cells[index-1] = ' '
+		}
+		c.cells[index] = ' '
+		return
+	}
+	if narrow.RuneWidth(c.cells[index]) == 2 && c.inside(x+1, y) {
+		c.cells[index+1] = ' '
+	}
+	c.cells[index] = ' '
+}
+
+// Text writes a string starting at x, advancing by each rune's display width.
+// It returns the number of cells written.
+func (c *Canvas) Text(x, y int, text string) int {
+	cursor := x
+	for _, r := range text {
+		c.Set(cursor, y, r)
+		cursor += max(narrow.RuneWidth(r), 1)
+	}
+	return cursor - x
+}
+
+// HLine fills a horizontal run with one rune.
+func (c *Canvas) HLine(x, y, width int, r rune) {
+	for i := 0; i < width; i++ {
+		c.Set(x+i, y, r)
+	}
+}
+
+// Border draws a rounded box around the whole canvas.
+func (c *Canvas) Border() {
+	if c.width < 2 || c.height < 2 {
+		return
+	}
+
+	c.HLine(1, 0, c.width-2, '─')
+	c.HLine(1, c.height-1, c.width-2, '─')
+	for y := 1; y < c.height-1; y++ {
+		c.Set(0, y, '│')
+		c.Set(c.width-1, y, '│')
+	}
+	c.Set(0, 0, '╭')
+	c.Set(c.width-1, 0, '╮')
+	c.Set(0, c.height-1, '╰')
+	c.Set(c.width-1, c.height-1, '╯')
+}
+
+// Title writes a centred title into the top border.
+func (c *Canvas) Title(text string) {
+	if c.width < narrow.StringWidth(text)+6 {
+		return
+	}
+	label := " " + text + " "
+	c.Text((c.width-narrow.StringWidth(label))/2, 0, label)
+}
+
+// Lines renders the canvas, dropping continuation cells and trailing spaces.
+func (c *Canvas) Lines() []string {
+	lines := make([]string, 0, c.height)
+
+	for y := 0; y < c.height; y++ {
+		var b strings.Builder
+		for x := 0; x < c.width; x++ {
+			r := c.cells[y*c.width+x]
+			if r == continuation {
+				continue
+			}
+			b.WriteRune(r)
+		}
+		lines = append(lines, strings.TrimRight(b.String(), " "))
+	}
+	return lines
+}
+
+// String renders the canvas as one newline-separated block.
+func (c *Canvas) String() string { return strings.Join(c.Lines(), "\n") }
