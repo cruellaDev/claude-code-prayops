@@ -62,10 +62,34 @@ func TestDoctorBootstrapSmoke(t *testing.T) {
 	}
 }
 
-func TestDoctorAcceptsBootstrapPaths(t *testing.T) {
-	code, _, stderr := exec(t, "", "doctor", "--plugin-root", "/tmp/root", "--plugin-data", "/tmp/data")
-	if code != 0 {
-		t.Fatalf("exit = %d, stderr = %q", code, stderr)
+// Doctor reports a table and exits non-zero when something needs attention,
+// so a caller can tell a healthy install from a broken one without parsing.
+func TestDoctorReportsProblems(t *testing.T) {
+	code, stdout, _ := exec(t, "", "doctor", "--plugin-root", t.TempDir(), "--plugin-data", t.TempDir())
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 for a missing runtime\n%s", code, stdout)
+	}
+	for _, want := range []string{"Plugin", "Runtime", "not installed", "/prayops:setup", "Terminal"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("report does not mention %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestDoctorJSON(t *testing.T) {
+	_, stdout, _ := exec(t, "", "doctor", "--json", "--plugin-root", t.TempDir(), "--plugin-data", t.TempDir())
+
+	var report struct {
+		Checks []struct {
+			Name   string `json:"name"`
+			Status string `json:"status"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("stdout is not JSON (%v): %q", err, stdout)
+	}
+	if len(report.Checks) < 5 {
+		t.Fatalf("only %d checks", len(report.Checks))
 	}
 }
 

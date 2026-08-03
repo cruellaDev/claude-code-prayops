@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/cruellaDev/claude-code-prayops/contracts"
+	"github.com/cruellaDev/claude-code-prayops/internal/doctor"
 	"github.com/cruellaDev/claude-code-prayops/internal/hook"
 	"github.com/cruellaDev/claude-code-prayops/internal/session"
 	"github.com/cruellaDev/claude-code-prayops/internal/spool"
@@ -301,22 +302,51 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	smoke := fs.Bool("bootstrap-smoke", false, "verify a freshly installed binary can execute")
-	// Accepted for forward compatibility with the setup script; real
-	// diagnostics against these paths arrive with CLD-04.
-	fs.String("plugin-root", "", "plugin root directory")
-	fs.String("plugin-data", "", "plugin data directory")
+	pluginRoot := fs.String("plugin-root", "", "plugin root directory")
+	pluginData := fs.String("plugin-data", "", "plugin data directory")
+	asJSON := fs.Bool("json", false, "print the report as JSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
+	// The bootstrap runs this against a binary that has no plugin around it
+	// yet, so the smoke test must not depend on any of the checks below.
 	if *smoke {
 		fmt.Fprintln(stdout, "ok")
 		return 0
 	}
 
-	fmt.Fprintf(stdout, "Runtime      OK  %s\n", version)
-	fmt.Fprintf(stdout, "Platform     OK  %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	report := doctor.Run(doctor.Options{
+		PluginRoot: firstNonEmpty(*pluginRoot, os.Getenv("CLAUDE_PLUGIN_ROOT")),
+		PluginData: firstNonEmpty(*pluginData, os.Getenv("CLAUDE_PLUGIN_DATA")),
+		Settings:   userconfig.SettingsPath(),
+	})
+
+	if *asJSON {
+		payload, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Fprintf(stderr, "prayops: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "%s\n", payload)
+		return 0
+	}
+
+	fmt.Fprintf(stdout, "%-11s  %-4s  %s/%s\n", "Binary", doctor.StatusOK, runtime.GOOS, runtime.GOARCH)
+	fmt.Fprint(stdout, report)
+	if report.Failed() {
+		return 1
+	}
 	return 0
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func usage(stderr io.Writer) {
