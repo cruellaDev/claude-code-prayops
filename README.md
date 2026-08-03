@@ -1,1 +1,1 @@
-# prayops
+# claude-code-prayops
