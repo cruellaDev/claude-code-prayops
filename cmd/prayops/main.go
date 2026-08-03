@@ -12,7 +12,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
+	"time"
+
+	"github.com/cruellaDev/claude-code-prayops/contracts"
+	"github.com/cruellaDev/claude-code-prayops/internal/hook"
+	"github.com/cruellaDev/claude-code-prayops/internal/spool"
 )
 
 // version is injected at release time with -ldflags "-X main.version=...".
@@ -34,11 +40,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "doctor":
 		return runDoctor(args[1:], stdout, stderr)
 	case "hook":
-		// Hooks must never block Claude Code. Until HOK-02 lands, drain stdin
-		// so the host is not left writing into a closed pipe, emit nothing,
-		// and succeed.
-		_, _ = io.Copy(io.Discard, stdin)
-		return 0
+		return runHook(args[1:], stdin)
 	case "watch", "pray", "statusline", "setup", "alias":
 		fmt.Fprintf(stderr, "prayops: %q is not implemented in this build\n", args[0])
 		return 2
@@ -47,6 +49,53 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		usage(stderr)
 		return 2
 	}
+}
+
+// runHook records one lifecycle event.
+//
+// It always exits 0 and always stays silent. A hook that fails loudly would
+// interrupt the user's session over a decorative status display, so failures
+// are recorded for doctor instead of reported.
+func runHook(args []string, stdin io.Reader) int {
+	host := contracts.HostClaude
+	if len(args) > 0 && args[0] == string(contracts.HostCodex) {
+		host = contracts.HostCodex
+	}
+
+	event, err := hook.NewAdapter(host).Adapt(stdin)
+	// Drain whatever is left so Claude Code is never writing into a closed
+	// pipe, which would surface as a hook error on its side.
+	_, _ = io.Copy(io.Discard, stdin)
+	if err != nil {
+		recordHookError(err)
+		return 0
+	}
+
+	events, err := spool.FromEnv()
+	if err != nil {
+		recordHookError(err)
+		return 0
+	}
+	if err := events.Write(event); err != nil {
+		recordHookError(err)
+		return 0
+	}
+	return 0
+}
+
+// recordHookError overwrites a single file, so it is self-bounding and needs
+// no rate limiting. Nothing here is written to stdout or stderr.
+func recordHookError(cause error) {
+	data := os.Getenv("CLAUDE_PLUGIN_DATA")
+	if data == "" {
+		return
+	}
+	dir := filepath.Join(data, "state")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	line := fmt.Sprintf("%s %v\n", time.Now().UTC().Format(time.RFC3339), cause)
+	_ = os.WriteFile(filepath.Join(dir, "hook-last-error.txt"), []byte(line), 0o600)
 }
 
 func runVersion(args []string, stdout, stderr io.Writer) int {

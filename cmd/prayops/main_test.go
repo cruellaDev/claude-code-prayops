@@ -3,9 +3,14 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/cruellaDev/claude-code-prayops/contracts"
+	"github.com/cruellaDev/claude-code-prayops/internal/spool"
 )
 
 func exec(t *testing.T, stdin string, args ...string) (code int, stdout, stderr string) {
@@ -64,9 +69,11 @@ func TestDoctorAcceptsBootstrapPaths(t *testing.T) {
 	}
 }
 
-// A hook runs on every Claude Code lifecycle event. It must consume its stdin,
-// print nothing, and succeed - even though this build has no adapter yet.
+// A hook runs on every Claude Code lifecycle event. With no plugin data
+// directory there is nowhere to record anything, and it still must print
+// nothing and succeed rather than interrupt the session.
 func TestHookIsSilentAndSucceeds(t *testing.T) {
+	t.Setenv("CLAUDE_PLUGIN_DATA", "")
 	payload := `{"session_id":"s1","hook_event_name":"PreToolUse","tool_input":{"command":"rm -rf /"}}`
 
 	code, stdout, stderr := exec(t, payload, "hook", "claude")
@@ -78,6 +85,62 @@ func TestHookIsSilentAndSucceeds(t *testing.T) {
 	}
 	if stderr != "" {
 		t.Fatalf("hook wrote to stderr: %q", stderr)
+	}
+}
+
+func TestHookRecordsEvent(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("CLAUDE_PLUGIN_DATA", data)
+
+	payload := `{"session_id":"s1","hook_event_name":"PreToolUse","cwd":"/Users/someone/payment-api",
+	  "tool_name":"Bash","tool_input":{"command":"psql -c 'select * from customers'"},
+	  "transcript_path":"/Users/someone/.claude/transcript.jsonl"}`
+
+	code, stdout, stderr := exec(t, payload, "hook", "claude")
+	if code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("exit = %d, stdout = %q, stderr = %q", code, stdout, stderr)
+	}
+
+	events, err := spool.New(filepath.Join(data, "state")).Read(0)
+	if err != nil {
+		t.Fatalf("read spool: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("spool holds %d events, want 1", len(events))
+	}
+	if events[0].Type != contracts.EventToolStarted || events[0].SessionID != "s1" {
+		t.Fatalf("unexpected event: %+v", events[0])
+	}
+	if events[0].Attributes["toolCategory"] != "execute" {
+		t.Fatalf("tool category = %q", events[0].Attributes["toolCategory"])
+	}
+}
+
+// Whatever goes wrong, the hook stays silent and successful; the reason is
+// left where doctor can find it.
+func TestHookFailsQuietly(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("CLAUDE_PLUGIN_DATA", data)
+
+	code, stdout, stderr := exec(t, `{"hook_event_name":"Notification"}`, "hook", "claude")
+	if code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("exit = %d, stdout = %q, stderr = %q", code, stdout, stderr)
+	}
+
+	recorded, err := os.ReadFile(filepath.Join(data, "state", "hook-last-error.txt"))
+	if err != nil {
+		t.Fatalf("no failure was recorded: %v", err)
+	}
+	if !strings.Contains(string(recorded), "Notification") {
+		t.Fatalf("unhelpful record: %q", recorded)
+	}
+
+	events, err := spool.New(filepath.Join(data, "state")).Read(0)
+	if err != nil {
+		t.Fatalf("read spool: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("an unhandled event was still recorded: %+v", events)
 	}
 }
 
