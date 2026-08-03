@@ -1,8 +1,11 @@
 // Command prayops is the PrayOps runtime.
 //
-// This is the SP-02 release spike: only the commands the bootstrap installer
-// needs to verify a freshly downloaded binary are implemented. Every other
-// command is reserved and exits non-zero so no caller can mistake a stub for
+// Implemented: version and doctor for the bootstrap installer, hook for
+// recording lifecycle events, and statusline for the compact Claude Code
+// status line and its settings entry.
+//
+// The watch, pray, setup, and alias commands are reserved and exit non-zero
+// rather than pretending to work, so no caller can mistake a stub for
 // working behaviour.
 package main
 
@@ -22,6 +25,7 @@ import (
 	"github.com/cruellaDev/claude-code-prayops/internal/session"
 	"github.com/cruellaDev/claude-code-prayops/internal/spool"
 	"github.com/cruellaDev/claude-code-prayops/internal/statusline"
+	"github.com/cruellaDev/claude-code-prayops/internal/userconfig"
 )
 
 // version is injected at release time with -ldflags "-X main.version=...".
@@ -45,7 +49,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "hook":
 		return runHook(args[1:], stdin)
 	case "statusline":
-		return runStatusline(args[1:], stdin, stdout)
+		return runStatusline(args[1:], stdin, stdout, stderr)
 	case "watch", "pray", "setup", "alias":
 		fmt.Fprintf(stderr, "prayops: %q is not implemented in this build\n", args[0])
 		return 2
@@ -106,7 +110,14 @@ type statuslineInput struct {
 //
 // Claude Code re-runs this on its refresh interval, so it must be a cheap
 // snapshot: it reads one small file and never animates.
-func runStatusline(args []string, stdin io.Reader, stdout io.Writer) int {
+func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		switch args[0] {
+		case "install", "uninstall", "status":
+			return runStatuslineConfig(args, stdout, stderr)
+		}
+	}
+
 	fs := flag.NewFlagSet("statusline", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	if err := fs.Parse(args); err != nil {
@@ -136,6 +147,104 @@ func runStatusline(args []string, stdin io.Reader, stdout io.Writer) int {
 		Color:   os.Getenv("NO_COLOR") == "",
 	}))
 	return 0
+}
+
+// runStatuslineConfig installs, removes, or reports the user's status line
+// setting.
+//
+// Like the bootstrap, install without --yes prints what it would change and
+// exits 10, because the caller is usually a skill with no terminal to prompt
+// from.
+func runStatuslineConfig(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("statusline "+args[0], flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	assumeYes := fs.Bool("yes", false, "apply the change")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+
+	data := os.Getenv("CLAUDE_PLUGIN_DATA")
+	if data == "" {
+		fmt.Fprintln(stderr, "prayops: CLAUDE_PLUGIN_DATA is not set")
+		return 1
+	}
+	settingsPath := userconfig.SettingsPath()
+	if settingsPath == "" {
+		fmt.Fprintln(stderr, "prayops: could not locate the Claude Code settings file")
+		return 1
+	}
+
+	manager := userconfig.NewManager(settingsPath, data)
+	line := userconfig.NewStatusLine(filepath.Join(data, "bin", "prayops"))
+
+	switch args[0] {
+	case "status":
+		record, err := manager.LoadRecord()
+		if err != nil {
+			fmt.Fprintf(stderr, "prayops: %v\n", err)
+			return 1
+		}
+		current, present, err := manager.Current()
+		if err != nil {
+			fmt.Fprintf(stderr, "prayops: %v\n", err)
+			return 1
+		}
+		switch {
+		case record.Installed:
+			fmt.Fprintf(stdout, "Status line  Installed by PrayOps  %s\n", settingsPath)
+		case present:
+			fmt.Fprintf(stdout, "Status line  Configured by you     %s\n", settingsPath)
+			fmt.Fprintf(stdout, "             %s\n", current)
+		default:
+			fmt.Fprintf(stdout, "Status line  Not configured        %s\n", settingsPath)
+		}
+		return 0
+
+	case "install":
+		current, present, err := manager.Current()
+		if err != nil {
+			fmt.Fprintf(stderr, "prayops: %v\n", err)
+			return 1
+		}
+		if !*assumeYes {
+			fmt.Fprintf(stdout, "PrayOps status line\n\n  Settings  %s\n  Command   %s\n", settingsPath, line.Command)
+			if present {
+				fmt.Fprintf(stdout, "  Replaces  %s\n", current)
+				fmt.Fprintf(stdout, "\nThe whole settings file is copied first and the value above is\nrestored by `prayops statusline uninstall`.\n")
+			}
+			fmt.Fprintln(stdout, "\nNothing has been changed. Re-run with --yes to confirm.")
+			return 10
+		}
+
+		record, err := manager.InstallStatusLine(line)
+		if err != nil {
+			fmt.Fprintf(stderr, "prayops: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "Status line installed in %s\n", settingsPath)
+		if record.BackupPath != "" {
+			fmt.Fprintf(stdout, "Previous settings backed up to %s\n", record.BackupPath)
+		}
+		return 0
+
+	default: // uninstall
+		if !*assumeYes {
+			fmt.Fprintf(stdout, "Would restore the previous status line in %s.\n", settingsPath)
+			fmt.Fprintln(stdout, "\nNothing has been changed. Re-run with --yes to confirm.")
+			return 10
+		}
+		changed, err := manager.UninstallStatusLine()
+		if err != nil {
+			fmt.Fprintf(stderr, "prayops: %v\n", err)
+			return 1
+		}
+		if !changed {
+			fmt.Fprintln(stdout, "No PrayOps status line to remove; your settings are unchanged.")
+			return 0
+		}
+		fmt.Fprintf(stdout, "Status line removed from %s\n", settingsPath)
+		return 0
+	}
 }
 
 func terminalColumns() int {
@@ -218,5 +327,6 @@ Usage:
   prayops doctor [--bootstrap-smoke]
   prayops hook <host>
   prayops statusline <host>
+  prayops statusline install|uninstall|status [--yes]
 `)
 }

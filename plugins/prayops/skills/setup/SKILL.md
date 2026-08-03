@@ -16,7 +16,10 @@ Set up PrayOps explicitly.
 4. If it fails, report the exit code meaning rather than retrying: 11 unsupported platform, 12 missing curl/wget or sha256 tool, 13 checksum mismatch, 14 rejected archive, 15 smoke test failure, 17 another setup running. In every one of these cases nothing was installed and any existing runtime is untouched.
 5. After installation, run:
    `"${CLAUDE_PLUGIN_DATA}/bin/prayops" doctor`
-6. Ask separately whether to configure:
-   - compact Claude Code status line
-   - optional `/pray` alias
-7. Never overwrite an existing status line or alias without backup and confirmation.
+6. Ask separately whether to configure the compact Claude Code status line:
+   - `"${CLAUDE_PLUGIN_DATA}/bin/prayops" statusline status` reports whether one is already configured.
+   - `"${CLAUDE_PLUGIN_DATA}/bin/prayops" statusline install` changes nothing and exits 10 after printing what it would write, including any existing status line it would replace.
+   - Show that to the user. Only after they agree, run the same command with `--yes`.
+   - `"${CLAUDE_PLUGIN_DATA}/bin/prayops" statusline uninstall --yes` restores what was there before.
+7. Ask separately whether to install the optional `/pray` alias.
+8. Never overwrite an existing status line or alias without backup and confirmation.
