@@ -31,6 +31,23 @@ func Phrase(phase contracts.SessionPhase) string {
 type Options struct {
 	// Smoke is the particle field to draw, if any.
 	Smoke []Particle
+
+	// Prayer is the effect currently on screen, if any.
+	Prayer *Prayer
+
+	// Color emits ANSI colour for prayer images.
+	Color bool
+}
+
+// Prayer is a placed effect ready to draw.
+//
+// Visibility and lift arrive as functions so this package does not need to
+// know how the dissolve is computed.
+type Prayer struct {
+	Raster  contracts.TerminalRaster
+	Rect    contracts.Rect
+	Visible func(x, y int) bool
+	Rise    func(x, y int) int
 }
 
 // Particle is one smoke cell.
@@ -68,10 +85,52 @@ func Frame(l contracts.Layout, state contracts.SessionState, opts Options) strin
 	drawBurner(c, l)
 	drawPlates(c, l)
 	drawAltar(c, l)
+	drawPrayer(c, l, opts)
 	drawStatus(c, l, state)
 
+	if opts.Color {
+		return c.ColorString()
+	}
 	return c.String()
 }
+
+// drawPrayer paints the effect over the scene. It is drawn after the furniture
+// because a prayer appearing behind the burner would look like a glitch.
+func drawPrayer(c *Canvas, l contracts.Layout, opts Options) {
+	if opts.Prayer == nil {
+		return
+	}
+	p := opts.Prayer
+
+	for _, cell := range p.Raster.Cells {
+		if p.Visible != nil && !p.Visible(cell.X, cell.Y) {
+			continue
+		}
+
+		rise := 0
+		if p.Rise != nil {
+			rise = p.Rise(cell.X, cell.Y)
+		}
+		x := p.Rect.X + cell.X
+		y := p.Rect.Y + cell.Y - rise
+
+		// A lifted cell can leave the scene; drop it rather than draw over the
+		// title or the altar.
+		if y < l.Content.Y || y >= l.Altar.Y {
+			continue
+		}
+
+		if cell.Glyph == HalfBlock {
+			c.SetColored(x, y, cell.Glyph, cell.Top, cell.Bottom)
+			continue
+		}
+		c.Set(x, y, cell.Glyph)
+	}
+}
+
+// HalfBlock is the glyph an image cell uses. It matches the raster package;
+// this package needs to recognise it to know a cell carries colour.
+const HalfBlock = '▀'
 
 func drawIncense(c *Canvas, l contracts.Layout) {
 	if l.Incense.Width <= 0 || l.Incense.Height <= 0 {

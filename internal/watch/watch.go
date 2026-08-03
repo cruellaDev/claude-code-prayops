@@ -13,7 +13,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/cruellaDev/claude-code-prayops/contracts"
+	"github.com/cruellaDev/claude-code-prayops/internal/effect"
 	"github.com/cruellaDev/claude-code-prayops/internal/layout"
+	"github.com/cruellaDev/claude-code-prayops/internal/prayer"
 	"github.com/cruellaDev/claude-code-prayops/internal/render"
 	"github.com/cruellaDev/claude-code-prayops/internal/session"
 	"github.com/cruellaDev/claude-code-prayops/internal/smoke"
@@ -38,6 +40,8 @@ type Options struct {
 	Host contracts.Host
 	// Motion off disables drift for reduced-motion users.
 	Motion bool
+	// Color emits ANSI colour for prayer images.
+	Color bool
 	// Seed makes the smoke reproducible; zero picks one from the clock.
 	Seed uint64
 	// Now is injectable for tests.
@@ -52,9 +56,23 @@ type Model struct {
 	smoke  *smoke.Field
 	layout contracts.Layout
 
+	cache  *prayer.Cache
+	active *activeEffect
+
 	heartbeat     string
 	lastHeartbeat time.Time
 	quitting      bool
+}
+
+// activeEffect is the one prayer on screen. There is never more than one; the
+// rest wait in the session's queue.
+type activeEffect struct {
+	cacheID   string
+	raster    contracts.TerminalRaster
+	placement contracts.Placement
+	mask      effect.Mask
+	timeline  effect.Timeline
+	started   time.Time
 }
 
 // New returns a watcher model.
@@ -74,6 +92,7 @@ func New(opts Options) *Model {
 		opts:   opts,
 		events: spool.New(opts.StateDir),
 		store:  session.NewStore(),
+		cache:  prayer.New(opts.StateDir),
 		smoke:  smoke.New(seed),
 		layout: layout.Compute(80, 24),
 	}
@@ -98,34 +117,98 @@ func (m *Model) Advance() {
 		}
 	}
 
-	state := m.State()
-	burst := 0
-	if len(state.PrayerQueue) > 0 {
-		burst = 4
-		// ponytail: a queued prayer only puffs smoke for now. Consume it here
-		// so the burst fires once instead of every frame; PRY-03 replaces this
-		// with the dissolve effect that actually owns the queue.
-		m.consumePrayer(state)
-	}
+	burst := m.stepEffect()
 
 	m.smoke.Step(smoke.Options{
-		Layout: m.layout,
-		Phase:  state.Phase,
-		Motion: m.opts.Motion,
-		Burst:  burst,
+		Layout:  m.layout,
+		Phase:   m.State().Phase,
+		Motion:  m.opts.Motion,
+		Burst:   burst,
+		BurstAt: m.burstOrigin(),
 	})
 }
 
-// consumePrayer drops the oldest queued prayer from the displayed session.
-func (m *Model) consumePrayer(state contracts.SessionState) {
+// stepEffect retires a finished prayer, starts the next one, and reports how
+// much smoke this frame should emit for it.
+func (m *Model) stepEffect() int {
+	now := m.opts.Now()
+
+	if m.active != nil {
+		phase, _ := m.active.timeline.At(now.Sub(m.active.started))
+		switch phase {
+		case effect.PhaseDone:
+			m.cache.Discard(m.active.cacheID)
+			m.active = nil
+		case effect.PhaseTrail:
+			// The image is gone; only smoke marks where it was.
+			return 2
+		default:
+			return 0
+		}
+	}
+
+	state := m.State()
+	if len(state.PrayerQueue) == 0 {
+		return 0
+	}
+
+	// PRY-04: one effect is active at a time, so the rest stay queued.
+	request := state.PrayerQueue[0]
 	state.PrayerQueue = state.PrayerQueue[1:]
 	m.store.Put(state)
+
+	art, err := m.cache.Load(request.Source.CacheID)
+	if err != nil || art.Width == 0 || art.Height == 0 {
+		// The prayer was never cached or has been collected. Losing an
+		// ornament is not worth reporting; the queue simply moves on.
+		return 0
+	}
+
+	placement, ok := effect.Place(request.Seed, m.layout, art.Width, art.Height, nil)
+	if !ok {
+		// Nothing fits on this terminal. Keep the smoke so something happens.
+		m.cache.Discard(request.Source.CacheID)
+		return 4
+	}
+
+	timeline := effect.NewTimeline(request.Duration)
+	m.active = &activeEffect{
+		cacheID:   request.Source.CacheID,
+		raster:    art,
+		placement: placement,
+		mask:      effect.NewMask(request.Seed, timeline),
+		timeline:  timeline,
+		started:   now,
+	}
+	return 4
+}
+
+// burstOrigin is where prayer smoke comes from: the effect if one is on
+// screen, otherwise the incense.
+func (m *Model) burstOrigin() contracts.Rect {
+	if m.active == nil {
+		return contracts.Rect{}
+	}
+	return m.active.placement.Rect
 }
 
 // Resize recomputes the layout. The smoke field is kept: re-seeding on resize
 // would restart the scene every time a pane moves.
 func (m *Model) Resize(width, height int) {
 	m.layout = layout.Compute(width, height)
+
+	// D-028: an effect keeps its zone and relative offset across a resize
+	// rather than being re-rolled, so it stays where the user saw it.
+	if m.active != nil {
+		placement, ok := effect.Reposition(m.active.placement, m.layout,
+			m.active.raster.Width, m.active.raster.Height)
+		if !ok {
+			m.cache.Discard(m.active.cacheID)
+			m.active = nil
+			return
+		}
+		m.active.placement = placement
+	}
 }
 
 // Interval is how long to wait before the next frame.
@@ -140,7 +223,19 @@ func (m *Model) Interval() time.Duration {
 
 // Frame renders the current scene.
 func (m *Model) Frame() string {
-	return render.Frame(m.layout, m.State(), render.Options{Smoke: m.smoke.Render(m.layout)})
+	opts := render.Options{Smoke: m.smoke.Render(m.layout), Color: m.opts.Color}
+
+	if m.active != nil {
+		elapsed := m.opts.Now().Sub(m.active.started)
+		mask := m.active.mask
+		opts.Prayer = &render.Prayer{
+			Raster:  m.active.raster,
+			Rect:    m.active.placement.Rect,
+			Visible: func(x, y int) bool { return mask.Visible(x, y, elapsed) },
+			Rise:    func(x, y int) int { return mask.Rise(x, y, elapsed) },
+		}
+	}
+	return render.Frame(m.layout, m.State(), opts)
 }
 
 type tickMsg time.Time

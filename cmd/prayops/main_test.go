@@ -13,6 +13,21 @@ import (
 	"github.com/cruellaDev/claude-code-prayops/internal/spool"
 )
 
+// TestMain clears the plugin environment before any test runs.
+//
+// These tests drive commands that write into CLAUDE_PLUGIN_DATA. Inheriting a
+// real one from the developer's shell - Claude Code sets it for whichever
+// plugin is running - makes the suite write into somebody else's plugin data
+// directory. Tests that need a data directory set their own.
+func TestMain(m *testing.M) {
+	for _, key := range []string{"CLAUDE_PLUGIN_DATA", "CLAUDE_PLUGIN_ROOT", "CLAUDE_CONFIG_DIR"} {
+		if err := os.Unsetenv(key); err != nil {
+			panic(err)
+		}
+	}
+	os.Exit(m.Run())
+}
+
 func exec(t *testing.T, stdin string, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -271,10 +286,99 @@ func TestAliasInstallNeedsConsent(t *testing.T) {
 	}
 }
 
+func TestPraySendsOneEvent(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("CLAUDE_PLUGIN_DATA", data)
+
+	code, stdout, stderr := exec(t, "", "pray", "--cwd", "/repos/payment-api", "--text", "무사배포")
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, stderr)
+	}
+	if stdout == "" {
+		t.Fatal("no confirmation was printed")
+	}
+
+	events, err := spool.New(filepath.Join(data, "state")).Read(0)
+	if err != nil {
+		t.Fatalf("read spool: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("spool holds %d events, want 1", len(events))
+	}
+
+	got := events[0]
+	if got.Type != contracts.EventPrayerRequested {
+		t.Fatalf("event type = %q", got.Type)
+	}
+	if got.Attributes["cacheId"] == "" || got.Attributes["prayerKind"] != "TEXT" {
+		t.Fatalf("attributes = %v", got.Attributes)
+	}
+
+	// The prayer's words must not travel with the event.
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, secret := range []string{"무사배포", "/repos/payment-api"} {
+		if strings.Contains(string(raw), secret) {
+			t.Fatalf("the event carries %q:\n%s", secret, raw)
+		}
+	}
+
+	// But the rendered card must be waiting in the cache.
+	cached, err := os.ReadFile(filepath.Join(data, "state", "cache", got.Attributes["cacheId"]+".json"))
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	if !strings.Contains(string(cached), "Width") {
+		t.Fatalf("cache does not hold a raster: %s", cached)
+	}
+}
+
+func TestPrayRefusesTwoSources(t *testing.T) {
+	t.Setenv("CLAUDE_PLUGIN_DATA", t.TempDir())
+
+	code, _, stderr := exec(t, "", "pray", "--text", "a", "--preset", "deploy")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(stderr, "choose one") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
+func TestPrayWithNoArgumentUsesTheDefaultPreset(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("CLAUDE_PLUGIN_DATA", data)
+
+	if code, _, stderr := exec(t, "", "pray"); code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, stderr)
+	}
+
+	events, err := spool.New(filepath.Join(data, "state")).Read(0)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("spool: %v, %d events", err, len(events))
+	}
+	if events[0].Attributes["prayerKind"] != "PRESET" {
+		t.Fatalf("kind = %q", events[0].Attributes["prayerKind"])
+	}
+}
+
+func TestPrayReportsAnUnreadableImage(t *testing.T) {
+	t.Setenv("CLAUDE_PLUGIN_DATA", t.TempDir())
+
+	code, _, stderr := exec(t, "", "pray", "--image", filepath.Join(t.TempDir(), "missing.png"))
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if stderr == "" {
+		t.Fatal("no explanation")
+	}
+}
+
 func TestUnimplementedAndUnknownCommandsFail(t *testing.T) {
 	for _, args := range [][]string{
 		{},
-		{"pray"},
 		{"setup"},
 		{"nonsense"},
 	} {

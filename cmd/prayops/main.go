@@ -2,11 +2,10 @@
 //
 // Implemented: version and doctor for the bootstrap installer, hook for
 // recording lifecycle events, statusline for the compact Claude Code status
-// line and its settings entry, alias for the optional /pray skill, and watch
-// for the full altar.
+// line and its settings entry, alias for the optional /pray skill, watch for
+// the full altar, and pray for the effects it shows.
 //
-// The pray and setup commands are reserved and exit non-zero rather than
-// pretending to work, so no caller can mistake a stub for working behaviour.
+// The setup command is reserved: installation is the bootstrap script's job.
 package main
 
 import (
@@ -19,11 +18,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cruellaDev/claude-code-prayops/contracts"
 	"github.com/cruellaDev/claude-code-prayops/internal/doctor"
 	"github.com/cruellaDev/claude-code-prayops/internal/hook"
+	"github.com/cruellaDev/claude-code-prayops/internal/prayer"
+	"github.com/cruellaDev/claude-code-prayops/internal/raster"
 	"github.com/cruellaDev/claude-code-prayops/internal/session"
 	"github.com/cruellaDev/claude-code-prayops/internal/spool"
 	"github.com/cruellaDev/claude-code-prayops/internal/statusline"
@@ -57,7 +59,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runAlias(args[1:], stdout, stderr)
 	case "watch":
 		return runWatch(args[1:], stdout, stderr)
-	case "pray", "setup":
+	case "pray":
+		return runPray(args[1:], stdout, stderr)
+	case "setup":
 		fmt.Fprintf(stderr, "prayops: %q is not implemented in this build\n", args[0])
 		return 2
 	default:
@@ -254,6 +258,124 @@ func runStatuslineConfig(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+// runPray sends one prayer effect to the watcher.
+//
+// The prayer is rendered here, where the image file is, and only the rendered
+// cell grid is cached. The event that travels carries a cache id, never the
+// text or the path.
+func runPray(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("pray", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	host := fs.String("host", string(contracts.HostClaude), "which host the prayer belongs to")
+	cwd := fs.String("cwd", "", "the project directory the prayer is sent from")
+	text := fs.String("text", "", "prayer text")
+	imagePath := fs.String("image", "", "path to a local image the user named explicitly")
+	preset := fs.String("preset", "", "a built-in prayer: "+strings.Join(raster.PresetNames(), ", "))
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	chosen := 0
+	for _, given := range []string{*text, *imagePath, *preset} {
+		if given != "" {
+			chosen++
+		}
+	}
+	if chosen > 1 {
+		fmt.Fprintln(stderr, "prayops: choose one of --text, --image, or --preset")
+		return 2
+	}
+
+	data := os.Getenv("CLAUDE_PLUGIN_DATA")
+	if data == "" {
+		fmt.Fprintln(stderr, "prayops: CLAUDE_PLUGIN_DATA is not set")
+		return 1
+	}
+	stateDir := filepath.Join(data, "state")
+
+	var (
+		art  contracts.TerminalRaster
+		kind contracts.PrayerSourceKind
+		err  error
+	)
+	switch {
+	case *imagePath != "":
+		art, err = raster.Image(*imagePath)
+		kind = contracts.PrayerSourceImage
+	case *text != "":
+		art, err = raster.Text(*text)
+		kind = contracts.PrayerSourceText
+	default:
+		name := *preset
+		if name == "" {
+			name = "deploy"
+		}
+		art, err = raster.Preset(name)
+		kind = contracts.PrayerSourcePreset
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "prayops: %v\n", err)
+		return 1
+	}
+
+	cache := prayer.New(stateDir)
+	cacheID := prayer.NewID()
+	if err := cache.Save(cacheID, art); err != nil {
+		fmt.Fprintf(stderr, "prayops: %v\n", err)
+		return 1
+	}
+	// Prayers nobody watched would otherwise pile up forever.
+	_ = cache.Cleanup(24 * time.Hour)
+
+	projectKey := hook.ProjectKey(*cwd)
+	sessionID := "prayer"
+	projectName := ""
+	if state, ok := session.NewSessions(stateDir).Newest(projectKey); ok {
+		sessionID = state.SessionID
+		projectName = state.ProjectName
+	}
+	if projectName == "" && *cwd != "" {
+		projectName = filepath.Base(filepath.Clean(*cwd))
+	}
+
+	event := contracts.RitualEvent{
+		SchemaVersion: spool.SchemaVersion,
+		ID:            prayer.NewID(),
+		Host:          contracts.Host(*host),
+		SessionID:     sessionID,
+		ProjectKey:    projectKey,
+		ProjectName:   projectName,
+		Type:          contracts.EventPrayerRequested,
+		OccurredAt:    time.Now().UTC(),
+		Attributes: map[string]string{
+			"prayerKind": string(kind),
+			"cacheId":    cacheID,
+			"effectSeed": strconv.FormatUint(seedFrom(cacheID), 10),
+		},
+	}
+
+	// The spool only: a prayer is for the watcher, and writing it to the
+	// session file would leave it queued forever when no watcher is running.
+	if err := spool.New(stateDir).Write(event); err != nil {
+		fmt.Fprintf(stderr, "prayops: %v\n", err)
+		return 1
+	}
+
+	fmt.Fprintln(stdout, "기도를 올렸습니다.")
+	return 0
+}
+
+// seedFrom derives the effect seed from the cache id, so the same prayer
+// always lands in the same place when replayed.
+func seedFrom(cacheID string) uint64 {
+	h := uint64(14695981039346656037)
+	for i := 0; i < len(cacheID); i++ {
+		h ^= uint64(cacheID[i])
+		h *= 1099511628211
+	}
+	return h
+}
+
 // runWatch starts the full altar in this terminal.
 //
 // The skills never invoke this: a long-running TUI inside Claude Code's Bash
@@ -294,6 +416,7 @@ func runWatch(args []string, stdout, stderr io.Writer) int {
 		StateDir: filepath.Join(data, "state"),
 		Host:     contracts.Host(*host),
 		Motion:   !still,
+		Color:    os.Getenv("NO_COLOR") == "",
 	}); err != nil {
 		fmt.Fprintf(stderr, "prayops: %v\n", err)
 		return 1
@@ -516,5 +639,6 @@ Usage:
   prayops statusline install|uninstall|status [--yes]
   prayops alias install|uninstall|status [--yes]
   prayops watch [--host claude] [--motion on|off]
+  prayops pray [--text ... | --image ... | --preset ...] [--cwd ...]
 `)
 }

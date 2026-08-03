@@ -10,6 +10,17 @@ import (
 
 var now = time.Unix(1700000000, 0).UTC()
 
+// TestMain clears the plugin environment so an inherited CLAUDE_CONFIG_DIR
+// cannot leak into a check.
+func TestMain(m *testing.M) {
+	for _, key := range []string{"CLAUDE_PLUGIN_DATA", "CLAUDE_PLUGIN_ROOT", "CLAUDE_CONFIG_DIR"} {
+		if err := os.Unsetenv(key); err != nil {
+			panic(err)
+		}
+	}
+	os.Exit(m.Run())
+}
+
 // world builds a plugin root and plugin data directory to diagnose.
 type world struct {
 	root     string

@@ -11,6 +11,17 @@ import (
 
 var frozen = time.Unix(1700000000, 0).UTC()
 
+// TestMain clears the plugin environment so a real CLAUDE_CONFIG_DIR inherited
+// from the developer's shell cannot be edited by these tests.
+func TestMain(m *testing.M) {
+	for _, key := range []string{"CLAUDE_PLUGIN_DATA", "CLAUDE_PLUGIN_ROOT", "CLAUDE_CONFIG_DIR"} {
+		if err := os.Unsetenv(key); err != nil {
+			panic(err)
+		}
+	}
+	os.Exit(m.Run())
+}
+
 func newManager(t *testing.T) *Manager {
 	t.Helper()
 	m := NewManager(filepath.Join(t.TempDir(), ".claude", "settings.json"), t.TempDir())

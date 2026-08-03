@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cruellaDev/claude-code-prayops/contracts"
+	"github.com/cruellaDev/claude-code-prayops/internal/effect"
 	"github.com/cruellaDev/claude-code-prayops/internal/spool"
 )
 
@@ -230,5 +231,145 @@ func TestQueuedPrayerBurstsOnce(t *testing.T) {
 	}
 	if m.smoke.Len() > after+5 {
 		t.Fatalf("the burst kept firing: %d particles, was %d", m.smoke.Len(), after)
+	}
+}
+
+// prayerEvent queues a cached prayer for the watcher to show.
+func prayerEvent(t *testing.T, m *Model, events *spool.Spool, seed string, width, height int) {
+	t.Helper()
+
+	art := contracts.TerminalRaster{Width: width, Height: height}
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			art.Cells = append(art.Cells, contracts.RasterCell{X: x, Y: y, Glyph: '#', Alpha: 1})
+		}
+	}
+	cacheID := "cache-" + seed
+	if err := m.cache.Save(cacheID, art); err != nil {
+		t.Fatalf("cache: %v", err)
+	}
+
+	e := event("pray-"+seed, contracts.EventPrayerRequested, 0)
+	e.Attributes = map[string]string{"prayerKind": "TEXT", "cacheId": cacheID, "effectSeed": "12345"}
+	if err := events.Write(e); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+}
+
+// PRY-03 end to end: a prayer appears, holds, dissolves, and is gone.
+func TestPrayerAppearsAndDissolves(t *testing.T) {
+	m, events := newModel(t)
+	now := base
+	m.opts.Now = func() time.Time { return now }
+
+	prayerEvent(t, m, events, "a", 10, 3)
+	m.Advance()
+
+	if m.active == nil {
+		t.Fatal("the prayer never started")
+	}
+
+	// Hold: every cell is on screen.
+	now = base.Add(effect.FadeIn + effect.Hold/2)
+	if strings.Count(m.Frame(), "#") != 30 {
+		t.Fatalf("the prayer is not fully drawn during hold:\n%s", m.Frame())
+	}
+
+	// Dissolve: fewer cells as it goes.
+	now = base.Add(effect.FadeIn + effect.Hold + effect.Dissolve/4)
+	early := strings.Count(m.Frame(), "#")
+	now = base.Add(effect.FadeIn + effect.Hold + 3*effect.Dissolve/4)
+	late := strings.Count(m.Frame(), "#")
+
+	if !(early > late) {
+		t.Fatalf("the prayer did not dissolve: %d then %d cells", early, late)
+	}
+
+	// Trail: the image is gone.
+	now = base.Add(effect.FadeIn + effect.Hold + effect.Dissolve + effect.Trail/2)
+	m.Advance()
+	if strings.Contains(m.Frame(), "#") {
+		t.Fatalf("the prayer survived into the trail:\n%s", m.Frame())
+	}
+
+	// Done: the effect is retired and its cache entry collected.
+	now = base.Add(effect.DefaultDuration + time.Second)
+	m.Advance()
+	if m.active != nil {
+		t.Fatal("the effect was not retired")
+	}
+	if _, err := m.cache.Load("cache-a"); err == nil {
+		t.Fatal("the cache entry was not collected")
+	}
+}
+
+// D-029: one effect at a time; the rest wait.
+func TestOnlyOnePrayerIsActive(t *testing.T) {
+	m, events := newModel(t)
+	now := base
+	m.opts.Now = func() time.Time { return now }
+
+	prayerEvent(t, m, events, "a", 8, 2)
+	prayerEvent(t, m, events, "b", 8, 2)
+	m.Advance()
+
+	if m.active == nil || m.active.cacheID != "cache-a" {
+		t.Fatalf("wrong effect active: %+v", m.active)
+	}
+	if len(m.State().PrayerQueue) != 1 {
+		t.Fatalf("queue holds %d, want the second prayer waiting", len(m.State().PrayerQueue))
+	}
+
+	now = base.Add(effect.DefaultDuration + time.Second)
+	m.Advance()
+
+	if m.active == nil || m.active.cacheID != "cache-b" {
+		t.Fatalf("the queued prayer did not start: %+v", m.active)
+	}
+	if len(m.State().PrayerQueue) != 0 {
+		t.Fatalf("queue still holds %d", len(m.State().PrayerQueue))
+	}
+}
+
+// D-028: a resize moves the effect, it does not re-roll it.
+func TestResizeKeepsThePrayerInItsZone(t *testing.T) {
+	m, events := newModel(t)
+	m.opts.Now = func() time.Time { return base }
+
+	prayerEvent(t, m, events, "a", 8, 2)
+	m.Advance()
+	if m.active == nil {
+		t.Fatal("no effect")
+	}
+	zone := m.active.placement.Zone
+
+	m.Resize(80, 24)
+
+	if m.active == nil {
+		t.Fatal("the effect was dropped by a resize that had room for it")
+	}
+	if m.active.placement.Zone != zone {
+		t.Fatalf("zone changed from %q to %q", zone, m.active.placement.Zone)
+	}
+}
+
+// A prayer whose cache entry has been collected must not wedge the queue.
+func TestMissingCacheEntryIsSkipped(t *testing.T) {
+	m, events := newModel(t)
+	m.opts.Now = func() time.Time { return base }
+
+	e := event("pray-x", contracts.EventPrayerRequested, 0)
+	e.Attributes = map[string]string{"prayerKind": "TEXT", "cacheId": "gone", "effectSeed": "1"}
+	if err := events.Write(e); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	m.Advance()
+
+	if m.active != nil {
+		t.Fatal("an effect started from a missing cache entry")
+	}
+	if len(m.State().PrayerQueue) != 0 {
+		t.Fatal("the missing prayer stayed queued")
 	}
 }

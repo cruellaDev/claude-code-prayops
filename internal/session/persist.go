@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/cruellaDev/claude-code-prayops/contracts"
@@ -100,6 +101,57 @@ func (s *Sessions) Save(state contracts.SessionState) error {
 		return fmt.Errorf("session: publish state: %w", err)
 	}
 	return nil
+}
+
+// List returns every stored session, newest first.
+func (s *Sessions) List() ([]contracts.SessionState, error) {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("session: read sessions: %w", err)
+	}
+
+	states := make([]contracts.SessionState, 0, len(entries))
+	for _, entry := range entries {
+		raw, err := os.ReadFile(filepath.Join(s.dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var state contracts.SessionState
+		if err := json.Unmarshal(raw, &state); err != nil || state.SessionID == "" {
+			continue
+		}
+		states = append(states, state)
+	}
+
+	sort.Slice(states, func(i, j int) bool { return states[i].UpdatedAt.After(states[j].UpdatedAt) })
+	return states, nil
+}
+
+// Newest returns the most recently updated session, preferring one in the
+// given project. A prayer sent from a project should join that project's
+// session rather than whichever was touched last.
+func (s *Sessions) Newest(projectKey string) (contracts.SessionState, bool) {
+	states, err := s.List()
+	if err != nil || len(states) == 0 {
+		return contracts.SessionState{}, false
+	}
+
+	if projectKey != "" {
+		for _, state := range states {
+			if state.ProjectKey == projectKey && state.Phase != contracts.PhaseSessionEnded {
+				return state, true
+			}
+		}
+	}
+	for _, state := range states {
+		if state.Phase != contracts.PhaseSessionEnded {
+			return state, true
+		}
+	}
+	return states[0], true
 }
 
 // Record folds one event into the stored state for its session and saves the
