@@ -2,11 +2,11 @@
 //
 // Implemented: version and doctor for the bootstrap installer, hook for
 // recording lifecycle events, statusline for the compact Claude Code status
-// line and its settings entry, and alias for the optional /pray skill.
+// line and its settings entry, alias for the optional /pray skill, and watch
+// for the full altar.
 //
-// The watch, pray, and setup commands are reserved and exit non-zero rather
-// than pretending to work, so no caller can mistake a stub for working
-// behaviour.
+// The pray and setup commands are reserved and exit non-zero rather than
+// pretending to work, so no caller can mistake a stub for working behaviour.
 package main
 
 import (
@@ -28,6 +28,7 @@ import (
 	"github.com/cruellaDev/claude-code-prayops/internal/spool"
 	"github.com/cruellaDev/claude-code-prayops/internal/statusline"
 	"github.com/cruellaDev/claude-code-prayops/internal/userconfig"
+	"github.com/cruellaDev/claude-code-prayops/internal/watch"
 )
 
 // version is injected at release time with -ldflags "-X main.version=...".
@@ -54,7 +55,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runStatusline(args[1:], stdin, stdout, stderr)
 	case "alias":
 		return runAlias(args[1:], stdout, stderr)
-	case "watch", "pray", "setup":
+	case "watch":
+		return runWatch(args[1:], stdout, stderr)
+	case "pray", "setup":
 		fmt.Fprintf(stderr, "prayops: %q is not implemented in this build\n", args[0])
 		return 2
 	default:
@@ -251,6 +254,53 @@ func runStatuslineConfig(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+// runWatch starts the full altar in this terminal.
+//
+// The skills never invoke this: a long-running TUI inside Claude Code's Bash
+// tool would hold the tool open for as long as it ran.
+func runWatch(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	host := fs.String("host", string(contracts.HostClaude), "which host's sessions to display")
+	motion := fs.String("motion", "on", "animation: on or off")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	data := os.Getenv("CLAUDE_PLUGIN_DATA")
+	if data == "" {
+		fmt.Fprintln(stderr, "prayops: CLAUDE_PLUGIN_DATA is not set.")
+		fmt.Fprintln(stderr, "Run /prayops:setup in Claude Code first, then start the watcher from the")
+		fmt.Fprintln(stderr, "command it prints.")
+		return 1
+	}
+
+	// Someone will inevitably run this inside Claude Code's Bash tool, where
+	// there is no terminal to draw into. Say so plainly instead of letting the
+	// TUI library report a missing /dev/tty.
+	if !isTerminal(os.Stdout) || !isTerminal(os.Stdin) {
+		fmt.Fprintln(stderr, "prayops: the altar needs a terminal to draw into.")
+		fmt.Fprintln(stderr, "Run `prayops watch` in your own terminal or a tmux pane, not through a pipe")
+		fmt.Fprintln(stderr, "and not from Claude Code's Bash tool. The compact status line is what shows")
+		fmt.Fprintln(stderr, "inside Claude Code.")
+		return 1
+	}
+
+	// NO_COLOR and --motion off both mean the same thing to a viewer who does
+	// not want movement, so either one stills the scene.
+	still := *motion == "off" || os.Getenv("NO_COLOR") != ""
+
+	if err := watch.Run(watch.Options{
+		StateDir: filepath.Join(data, "state"),
+		Host:     contracts.Host(*host),
+		Motion:   !still,
+	}); err != nil {
+		fmt.Fprintf(stderr, "prayops: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 // runAlias installs or removes the optional user-scope /pray skill.
 //
 // The alias is a convenience only: /prayops:pray works without it, which is
@@ -439,6 +489,13 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// isTerminal reports whether a file is attached to a character device, which
+// is what a terminal looks like from here.
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value != "" {
@@ -458,5 +515,6 @@ Usage:
   prayops statusline <host>
   prayops statusline install|uninstall|status [--yes]
   prayops alias install|uninstall|status [--yes]
+  prayops watch [--host claude] [--motion on|off]
 `)
 }

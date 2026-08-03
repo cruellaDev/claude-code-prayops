@@ -274,7 +274,6 @@ func TestAliasInstallNeedsConsent(t *testing.T) {
 func TestUnimplementedAndUnknownCommandsFail(t *testing.T) {
 	for _, args := range [][]string{
 		{},
-		{"watch"},
 		{"pray"},
 		{"setup"},
 		{"nonsense"},

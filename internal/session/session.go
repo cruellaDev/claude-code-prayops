@@ -121,6 +121,17 @@ func (s *Store) Apply(event contracts.RitualEvent) contracts.SessionState {
 	return updated
 }
 
+// Put replaces the stored state for a session.
+//
+// The watcher uses it to consume a prayer from the queue: the reducer only
+// appends, since events never say a prayer has been shown.
+func (s *Store) Put(state contracts.SessionState) {
+	if state.SessionID == "" {
+		return
+	}
+	s.states[state.SessionID] = state
+}
+
 // ApplyAll folds a batch in order.
 func (s *Store) ApplyAll(events []contracts.RitualEvent) {
 	for _, event := range events {
