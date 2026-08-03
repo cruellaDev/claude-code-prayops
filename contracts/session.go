@@ -27,6 +27,10 @@ type SessionState struct {
 	LastEventID   string       `json:"lastEventId"`
 	UpdatedAt     time.Time    `json:"updatedAt"`
 
+	// TurnStartedAt is when the current turn began. The incense burns down
+	// from here, so it must not move on every event within the turn.
+	TurnStartedAt time.Time `json:"turnStartedAt,omitempty"`
+
 	// ToolErrored marks that the most recent tool call failed. The reason is
 	// never stored, only the fact.
 	ToolErrored bool `json:"toolErrored,omitempty"`

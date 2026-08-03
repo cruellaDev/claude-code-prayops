@@ -38,6 +38,7 @@ func Reduce(state contracts.SessionState, event contracts.RitualEvent) contracts
 		state.ToolErrored = false
 	case contracts.EventPromptSubmitted:
 		state.Phase = contracts.PhaseThinking
+		state.TurnStartedAt = event.OccurredAt
 		// A new turn starts clean, so a failure from the previous one stops
 		// colouring the display.
 		state.ToolErrored = false

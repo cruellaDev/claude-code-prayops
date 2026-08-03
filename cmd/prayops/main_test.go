@@ -144,12 +144,67 @@ func TestHookFailsQuietly(t *testing.T) {
 	}
 }
 
+// The status line runs on Claude Code's refresh interval, so it reads one
+// session file and nothing else.
+func TestStatuslineRendersItsOwnSession(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("CLAUDE_PLUGIN_DATA", data)
+	t.Setenv("NO_COLOR", "1")
+
+	// Two sessions are live; the status line must show the one that asked.
+	for _, payload := range []string{
+		`{"session_id":"mine","hook_event_name":"UserPromptSubmit"}`,
+		`{"session_id":"theirs","hook_event_name":"SessionEnd"}`,
+	} {
+		if code, _, _ := exec(t, payload, "hook", "claude"); code != 0 {
+			t.Fatalf("hook exit = %d", code)
+		}
+	}
+
+	code, stdout, stderr := exec(t, `{"session_id":"mine","model":{"display_name":"Opus"}}`, "statusline", "claude")
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "THINKING") {
+		t.Fatalf("status line = %q, want the prompt-submitted phase", stdout)
+	}
+	if strings.Contains(stdout, "ENDED") {
+		t.Fatalf("status line showed another session: %q", stdout)
+	}
+	if strings.Count(stdout, "\n") != 1 {
+		t.Fatalf("status line is not exactly one line: %q", stdout)
+	}
+}
+
+// Before the first hook fires there is no session file, and the status line
+// still has to print something harmless rather than an error.
+func TestStatuslineWithoutStateIsQuiet(t *testing.T) {
+	t.Setenv("CLAUDE_PLUGIN_DATA", t.TempDir())
+	t.Setenv("NO_COLOR", "1")
+
+	code, stdout, stderr := exec(t, `{"session_id":"unknown"}`, "statusline", "claude")
+	if code != 0 || stderr != "" {
+		t.Fatalf("exit = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "IDLE") {
+		t.Fatalf("status line = %q", stdout)
+	}
+}
+
+func TestStatuslineWithoutPluginDataPrintsNothing(t *testing.T) {
+	t.Setenv("CLAUDE_PLUGIN_DATA", "")
+
+	code, stdout, stderr := exec(t, `{"session_id":"mine"}`, "statusline", "claude")
+	if code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("exit = %d, stdout = %q, stderr = %q", code, stdout, stderr)
+	}
+}
+
 func TestUnimplementedAndUnknownCommandsFail(t *testing.T) {
 	for _, args := range [][]string{
 		{},
 		{"watch"},
 		{"pray"},
-		{"statusline", "claude"},
 		{"setup"},
 		{"alias"},
 		{"nonsense"},

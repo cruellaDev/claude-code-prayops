@@ -14,11 +14,14 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/cruellaDev/claude-code-prayops/contracts"
 	"github.com/cruellaDev/claude-code-prayops/internal/hook"
+	"github.com/cruellaDev/claude-code-prayops/internal/session"
 	"github.com/cruellaDev/claude-code-prayops/internal/spool"
+	"github.com/cruellaDev/claude-code-prayops/internal/statusline"
 )
 
 // version is injected at release time with -ldflags "-X main.version=...".
@@ -41,7 +44,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runDoctor(args[1:], stdout, stderr)
 	case "hook":
 		return runHook(args[1:], stdin)
-	case "watch", "pray", "statusline", "setup", "alias":
+	case "statusline":
+		return runStatusline(args[1:], stdin, stdout)
+	case "watch", "pray", "setup", "alias":
 		fmt.Fprintf(stderr, "prayops: %q is not implemented in this build\n", args[0])
 		return 2
 	default:
@@ -71,16 +76,74 @@ func runHook(args []string, stdin io.Reader) int {
 		return 0
 	}
 
-	events, err := spool.FromEnv()
-	if err != nil {
-		recordHookError(err)
+	data := os.Getenv("CLAUDE_PLUGIN_DATA")
+	if data == "" {
+		recordHookError(spool.ErrNoPluginData)
 		return 0
 	}
-	if err := events.Write(event); err != nil {
+	stateDir := filepath.Join(data, "state")
+
+	// The spool feeds the watcher's animation; the session file feeds the
+	// status line. Both are written here because the hook is the only writer
+	// guaranteed to run - a status line that depended on the watcher would
+	// show nothing whenever no watcher is attached.
+	if err := spool.New(stateDir).Write(event); err != nil {
 		recordHookError(err)
-		return 0
+	}
+	if _, err := session.NewSessions(stateDir).Record(event); err != nil {
+		recordHookError(err)
 	}
 	return 0
+}
+
+// statuslineInput is the allowlisted view of the status line payload. Claude
+// Code sends model, workspace, and cost details that PrayOps has no use for.
+type statuslineInput struct {
+	SessionID string `json:"session_id"`
+}
+
+// runStatusline prints one compact line describing the caller's own session.
+//
+// Claude Code re-runs this on its refresh interval, so it must be a cheap
+// snapshot: it reads one small file and never animates.
+func runStatusline(args []string, stdin io.Reader, stdout io.Writer) int {
+	fs := flag.NewFlagSet("statusline", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	if err := fs.Parse(args); err != nil {
+		return 0
+	}
+
+	var in statuslineInput
+	if raw, err := io.ReadAll(io.LimitReader(stdin, hook.MaxInput)); err == nil {
+		_ = json.Unmarshal(raw, &in)
+	}
+
+	data := os.Getenv("CLAUDE_PLUGIN_DATA")
+	if data == "" {
+		// Nothing to report and nowhere to complain to. An empty line beats
+		// repeating an error on every refresh.
+		return 0
+	}
+
+	state, _, err := session.NewSessions(filepath.Join(data, "state")).Load(in.SessionID)
+	if err != nil {
+		return 0
+	}
+
+	fmt.Fprintln(stdout, statusline.Render(state, statusline.Options{
+		Now:     time.Now(),
+		Columns: terminalColumns(),
+		Color:   os.Getenv("NO_COLOR") == "",
+	}))
+	return 0
+}
+
+func terminalColumns() int {
+	columns, err := strconv.Atoi(os.Getenv("COLUMNS"))
+	if err != nil || columns <= 0 {
+		return statusline.DefaultColumns
+	}
+	return columns
 }
 
 // recordHookError overwrites a single file, so it is self-bounding and needs
@@ -154,5 +217,6 @@ Usage:
   prayops version [--json]
   prayops doctor [--bootstrap-smoke]
   prayops hook <host>
+  prayops statusline <host>
 `)
 }
