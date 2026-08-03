@@ -26,4 +26,8 @@ Set up PrayOps explicitly.
    - Only after the user agrees, run the same command with `--yes`.
    - Exit 3 means something already provides `/pray`; that file is left untouched and `/prayops:pray` keeps working. Do not offer to delete it.
    - `"${CLAUDE_PLUGIN_DATA}/bin/prayops" alias uninstall --yes` removes it again.
-8. Never overwrite an existing status line or alias without backup and confirmation.
+8. Finish by telling the user where the altar lives:
+   - the status line, if they installed it, updates on its own from now on;
+   - the full smoke and prayer dissolve need `/prayops:watch`, which runs in their own terminal;
+   - `/prayops:pray` sends one prayer.
+9. Never overwrite an existing status line or alias without backup and confirmation. Both are optional, and PrayOps works without either.
