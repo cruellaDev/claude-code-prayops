@@ -81,9 +81,24 @@ case "$(uname -m)" in
   *) arch="$(uname -m)" ;;
 esac
 
-# The supported list is an array of {"os":..,"arch":..} objects; collapse the
-# whitespace so one grep can answer whether this pair is in it.
-if ! tr -d ' \n\t' <"$MANIFEST" | grep -q "{\"os\":\"$os\",\"arch\":\"$arch\"}"; then
+# The supported list is an array of {"os":..,"arch":..} objects. Each entry is
+# checked for both keys separately rather than matched as one string, because
+# JSON key order is not guaranteed - a re-serialised manifest can put "arch"
+# first, and matching the whole object would then refuse a platform that is in
+# fact supported.
+supported=0
+for entry in $(tr -d ' \n\t' <"$MANIFEST" |
+  sed -n 's/.*"supported":\[\(.*\)\].*/\1/p' | tr '}' '\n'); do
+  case "$entry" in
+    *"\"os\":\"$os\""*)
+      case "$entry" in
+        *"\"arch\":\"$arch\""*) supported=1 ;;
+      esac
+      ;;
+  esac
+done
+
+if [ "$supported" -ne 1 ]; then
   cat >&2 <<EOF
 PrayOps does not ship a runtime for $os/$arch.
 

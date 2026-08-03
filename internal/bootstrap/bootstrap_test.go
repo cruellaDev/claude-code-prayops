@@ -405,3 +405,52 @@ func TestRefusesWithoutPluginData(t *testing.T) {
 		t.Fatalf("unhelpful message:\n%s", out)
 	}
 }
+
+// JSON key order is not guaranteed. Matching the whole {"os":..,"arch":..}
+// object as one string made a re-serialised manifest - which puts "arch"
+// first - look like an unsupported platform.
+func TestSupportedPlatformIgnoresKeyOrder(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	script, err := os.ReadFile(filepath.Join(pluginRoot, "scripts", "setup.sh"))
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "scripts", "setup.sh"), script, 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	// Same manifest, keys the other way round.
+	manifest := fmt.Sprintf(`{
+  "schemaVersion": 1,
+  "runtimeVersion": %q,
+  "repository": "cruellaDev/claude-code-prayops",
+  "assetTemplate": "prayops_{version}_{os}_{arch}.tar.gz",
+  "checksumAsset": "checksums.txt",
+  "supported": [
+    {"arch": %q, "os": %q}
+  ]
+}`, runtimeVersion, runtime.GOARCH, runtime.GOOS)
+	if err := os.WriteFile(filepath.Join(root, "runtime-manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	data := t.TempDir()
+	cmd := exec.Command(filepath.Join(root, "scripts", "setup.sh"), "--yes")
+	cmd.Env = append(os.Environ(),
+		"CLAUDE_PLUGIN_ROOT="+root,
+		"CLAUDE_PLUGIN_DATA="+data,
+		"PRAYOPS_RELEASE_BASE_URL="+release(t, goodArchive(t), false),
+	)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("install refused a supported platform: %v\n%s", err, out)
+	}
+	if _, statErr := os.Stat(filepath.Join(data, "bin", "prayops")); statErr != nil {
+		t.Fatalf("nothing was installed: %v\n%s", statErr, out)
+	}
+}
