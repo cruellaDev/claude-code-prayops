@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # macOS and Linux are both P0 targets and they disagree on the tools the
+  # bootstrap depends on - shasum vs sha256sum, BSD vs GNU tar - so the suite
+  # runs on both rather than trusting one.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - run: go vet ./...
+
+      # Covers the plugin structure, contracts, runtime, and the bootstrap
+      # installer against a local release server.
+      - run: go test ./...
+
+      - run: go test -race ./...
+
+  cross-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [darwin, linux]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -ldflags "-s -w -X main.version=ci" -o /dev/null ./cmd/prayops
+
+  # Proves the release archives and checksums.txt the bootstrap expects can
+  # actually be produced, without publishing anything.
+  release-dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish
+
+      - name: Archives match the runtime manifest
+        run: |
+          set -eu
+          template="$(sed -n 's/.*"assetTemplate"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' \
+            plugins/prayops/runtime-manifest.json)"
+          test -f dist/checksums.txt
+          for target in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64; do
+            os="${target%_*}"
+            arch="${target#*_}"
+            expected="$(printf '%s' "$template" \
+              | sed -e "s/{version}/*/" -e "s/{os}/$os/" -e "s/{arch}/$arch/")"
+            # shellcheck disable=SC2086
+            ls dist/$expected >/dev/null
+          done
