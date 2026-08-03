@@ -206,6 +206,8 @@ claude plugin validate .
 claude plugin validate ./plugins/prayops --strict
 ```
 
-CI는 macOS와 Linux 양쪽에서 돕니다. 두 플랫폼이 부트스트랩이 쓰는 도구(`sha256sum` vs `shasum`, GNU vs BSD tar)에서 갈리기 때문에 한쪽만으로는 증명되지 않습니다.
+CI는 macOS와 Linux 양쪽에서 돕니다. 두 플랫폼이 부트스트랩이 쓰는 도구(`sha256sum` vs `shasum`, GNU vs BSD tar)에서 갈리기 때문에 한쪽만으로는 증명되지 않습니다. 네 타깃 모두 교차 컴파일하고, GoReleaser 스냅샷으로 만든 아카이브 이름이 런타임 매니페스트와 맞는지도 검사합니다.
+
+릴리즈 전 남은 수동 확인 항목은 `CHANGELOG.md`에 있습니다.
 
 라이선스 MIT.
