@@ -2,10 +2,13 @@ module github.com/cruellaDev/claude-code-prayops
 
 go 1.26
 
-require github.com/mattn/go-runewidth v0.0.27
+require (
+	charm.land/bubbletea/v2 v2.0.8
+	github.com/mattn/go-runewidth v0.0.27
+	golang.org/x/image v0.44.0
+)
 
 require (
-	charm.land/bubbletea/v2 v2.0.8 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260703014108-f5a850f9c2b7 // indirect
 	github.com/charmbracelet/x/ansi v0.11.7 // indirect
