@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ -z "${CLAUDE_PLUGIN_DATA:-}" ]; then
+  echo "PrayOps must be invoked from the Claude Code plugin environment." >&2
+  exit 1
+fi
+
+runtime="${CLAUDE_PLUGIN_DATA}/bin/prayops"
+
+if [ ! -x "$runtime" ]; then
+  echo "PrayOps runtime is not installed. Run /prayops:setup." >&2
+  exit 127
+fi
+
+exec "$runtime" "$@"

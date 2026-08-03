@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "runtimeVersion": "0.1.0",
+  "repository": "cruellaDev/claude-code-prayops",
+  "assetTemplate": "prayops_{version}_{os}_{arch}.tar.gz",
+  "checksumAsset": "checksums.txt",
+  "supported": [
+    {
+      "os": "darwin",
+      "arch": "arm64"
+    },
+    {
+      "os": "darwin",
+      "arch": "amd64"
+    },
+    {
+      "os": "linux",
+      "arch": "arm64"
+    },
+    {
+      "os": "linux",
+      "arch": "amd64"
+    }
+  ]
+}

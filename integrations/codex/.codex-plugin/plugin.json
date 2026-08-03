@@ -1,0 +1,6 @@
+{
+  "name": "prayops",
+  "version": "0.1.0",
+  "description": "Secondary Codex integration for the PrayOps runtime.",
+  "hooks": "./hooks/hooks.json"
+}

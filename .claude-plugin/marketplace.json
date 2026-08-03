@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "prayops",
+  "owner": {
+    "name": "cruellaDev"
+  },
+  "description": "Pixel ritual tools for Claude Code.",
+  "version": "0.1.0",
+  "plugins": [
+    {
+      "name": "prayops",
+      "source": "./plugins/prayops",
+      "description": "A pixel ritual altar, lifecycle hooks, and prayer effects for Claude Code.",
+      "version": "0.1.0",
+      "category": "developer-tools",
+      "tags": [
+        "tui",
+        "statusline",
+        "hooks",
+        "pixel-art"
+      ]
+    }
+  ]
+}
