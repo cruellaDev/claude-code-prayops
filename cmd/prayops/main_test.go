@@ -224,13 +224,59 @@ func TestStatuslineWithoutPluginDataPrintsNothing(t *testing.T) {
 	}
 }
 
+// FR-040: the alias is optional, so a name someone else already uses is a
+// refusal rather than a takeover.
+func TestAliasRefusesToTakeAnExistingPray(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("CLAUDE_PLUGIN_DATA", filepath.Join(base, "data"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(base, "config"))
+
+	path := filepath.Join(base, "config", "skills", "pray", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	const theirs = "---\nname: pray\n---\n\nmine\n"
+	if err := os.WriteFile(path, []byte(theirs), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	code, _, stderr := exec(t, "", "alias", "install", "--yes")
+	if code != 3 {
+		t.Fatalf("exit = %d, want 3", code)
+	}
+	if !strings.Contains(stderr, "left untouched") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(body) != theirs {
+		t.Fatalf("their file changed:\n%s", body)
+	}
+}
+
+func TestAliasInstallNeedsConsent(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("CLAUDE_PLUGIN_DATA", filepath.Join(base, "data"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(base, "config"))
+
+	code, stdout, _ := exec(t, "", "alias", "install")
+	if code != 10 {
+		t.Fatalf("exit = %d, want 10\n%s", code, stdout)
+	}
+	if _, err := os.Stat(filepath.Join(base, "config", "skills", "pray", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatal("the alias was installed without consent")
+	}
+}
+
 func TestUnimplementedAndUnknownCommandsFail(t *testing.T) {
 	for _, args := range [][]string{
 		{},
 		{"watch"},
 		{"pray"},
 		{"setup"},
-		{"alias"},
 		{"nonsense"},
 	} {
 		name := "none"

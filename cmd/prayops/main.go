@@ -1,16 +1,17 @@
 // Command prayops is the PrayOps runtime.
 //
 // Implemented: version and doctor for the bootstrap installer, hook for
-// recording lifecycle events, and statusline for the compact Claude Code
-// status line and its settings entry.
+// recording lifecycle events, statusline for the compact Claude Code status
+// line and its settings entry, and alias for the optional /pray skill.
 //
-// The watch, pray, setup, and alias commands are reserved and exit non-zero
-// rather than pretending to work, so no caller can mistake a stub for
-// working behaviour.
+// The watch, pray, and setup commands are reserved and exit non-zero rather
+// than pretending to work, so no caller can mistake a stub for working
+// behaviour.
 package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -51,7 +52,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runHook(args[1:], stdin)
 	case "statusline":
 		return runStatusline(args[1:], stdin, stdout, stderr)
-	case "watch", "pray", "setup", "alias":
+	case "alias":
+		return runAlias(args[1:], stdout, stderr)
+	case "watch", "pray", "setup":
 		fmt.Fprintf(stderr, "prayops: %q is not implemented in this build\n", args[0])
 		return 2
 	default:
@@ -248,6 +251,102 @@ func runStatuslineConfig(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+// runAlias installs or removes the optional user-scope /pray skill.
+//
+// The alias is a convenience only: /prayops:pray works without it, which is
+// why a conflict is a refusal rather than something to resolve.
+func runAlias(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "prayops: alias needs install, uninstall, or status")
+		return 2
+	}
+
+	fs := flag.NewFlagSet("alias "+args[0], flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	assumeYes := fs.Bool("yes", false, "apply the change")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+
+	data := os.Getenv("CLAUDE_PLUGIN_DATA")
+	if data == "" {
+		fmt.Fprintln(stderr, "prayops: CLAUDE_PLUGIN_DATA is not set")
+		return 1
+	}
+	configDir := userconfig.ConfigDir()
+	if configDir == "" {
+		fmt.Fprintln(stderr, "prayops: could not locate the Claude Code configuration directory")
+		return 1
+	}
+
+	manager := userconfig.NewManager(userconfig.SettingsPath(), data)
+	path := userconfig.AliasPath(configDir)
+
+	switch args[0] {
+	case "status":
+		record, err := manager.LoadAliasRecord()
+		if err != nil {
+			fmt.Fprintf(stderr, "prayops: %v\n", err)
+			return 1
+		}
+		_, statErr := os.Stat(path)
+		switch {
+		case record.Installed && statErr == nil:
+			fmt.Fprintf(stdout, "Alias /pray  Installed by PrayOps  %s\n", path)
+		case statErr == nil:
+			fmt.Fprintf(stdout, "Alias /pray  Provided by another skill  %s\n", path)
+		default:
+			fmt.Fprintf(stdout, "Alias /pray  Not installed  %s\n", path)
+		}
+		return 0
+
+	case "install":
+		if !*assumeYes {
+			fmt.Fprintf(stdout, "PrayOps /pray alias\n\n  Writes    %s\n  Runs      %s\n", path, filepath.Join(data, "bin", "prayops"))
+			if _, err := os.Stat(path); err == nil {
+				fmt.Fprintf(stdout, "\nSomething already provides /pray at that path. PrayOps will not\nreplace it. /prayops:pray works without the alias.\n")
+			}
+			fmt.Fprintln(stdout, "\nNothing has been changed. Re-run with --yes to confirm.")
+			return 10
+		}
+
+		record, err := manager.InstallAlias(configDir, filepath.Join(data, "bin", "prayops"))
+		var conflict userconfig.ErrAliasConflict
+		if errors.As(err, &conflict) {
+			fmt.Fprintf(stderr, "prayops: %s already exists and was left untouched.\n", conflict.Path)
+			fmt.Fprintln(stderr, "Use /prayops:pray, or remove that file yourself first.")
+			return 3
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "prayops: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "Alias installed at %s\n", record.Path)
+		return 0
+
+	case "uninstall":
+		if !*assumeYes {
+			fmt.Fprintf(stdout, "Would remove %s.\n\nNothing has been changed. Re-run with --yes to confirm.\n", path)
+			return 10
+		}
+		removed, err := manager.UninstallAlias()
+		if err != nil {
+			fmt.Fprintf(stderr, "prayops: %v\n", err)
+			return 1
+		}
+		if !removed {
+			fmt.Fprintln(stdout, "No PrayOps alias to remove; nothing was changed.")
+			return 0
+		}
+		fmt.Fprintf(stdout, "Alias removed from %s\n", path)
+		return 0
+
+	default:
+		fmt.Fprintf(stderr, "prayops: unknown alias command %q\n", args[0])
+		return 2
+	}
+}
+
 func terminalColumns() int {
 	columns, err := strconv.Atoi(os.Getenv("COLUMNS"))
 	if err != nil || columns <= 0 {
@@ -358,5 +457,6 @@ Usage:
   prayops hook <host>
   prayops statusline <host>
   prayops statusline install|uninstall|status [--yes]
+  prayops alias install|uninstall|status [--yes]
 `)
 }

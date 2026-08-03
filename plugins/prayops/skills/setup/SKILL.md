@@ -21,5 +21,9 @@ Set up PrayOps explicitly.
    - `"${CLAUDE_PLUGIN_DATA}/bin/prayops" statusline install` changes nothing and exits 10 after printing what it would write, including any existing status line it would replace.
    - Show that to the user. Only after they agree, run the same command with `--yes`.
    - `"${CLAUDE_PLUGIN_DATA}/bin/prayops" statusline uninstall --yes` restores what was there before.
-7. Ask separately whether to install the optional `/pray` alias.
+7. Ask separately whether to install the optional `/pray` alias:
+   - `"${CLAUDE_PLUGIN_DATA}/bin/prayops" alias install` changes nothing and exits 10 after printing where it would write.
+   - Only after the user agrees, run the same command with `--yes`.
+   - Exit 3 means something already provides `/pray`; that file is left untouched and `/prayops:pray` keeps working. Do not offer to delete it.
+   - `"${CLAUDE_PLUGIN_DATA}/bin/prayops" alias uninstall --yes` removes it again.
 8. Never overwrite an existing status line or alias without backup and confirmation.
