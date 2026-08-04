@@ -120,26 +120,42 @@ jobs:
 
       # The strongest check available: install from the archives just built,
       # using the shipped bootstrap, exactly as a user would.
+      #
+      # A snapshot binary reports `<version>-SNAPSHOT-<sha>`, and the installer
+      # refuses a binary whose version does not match the manifest - correctly.
+      # So the manifest handed to the bootstrap is a copy carrying the snapshot
+      # version. Everything else is the real script and the real archive.
       - name: The bootstrap can install what GoReleaser produced
         run: |
           set -eu
-          version="$(sed -n 's/.*"runtimeVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-            plugins/prayops/runtime-manifest.json)"
+          archive="$(ls dist/prayops_*_linux_amd64.tar.gz)"
+          snapshot="$(basename "$archive" | sed -E 's/^prayops_(.+)_linux_amd64\.tar\.gz$/\1/')"
+          echo "snapshot version: $snapshot"
 
-          # Serve dist/ as if it were the release, renaming the snapshot
-          # archives to the versions the manifest asks for.
-          mkdir -p serve
-          for f in dist/prayops_*_linux_amd64.tar.gz; do
-            cp "$f" "serve/prayops_${version}_linux_amd64.tar.gz"
-          done
+          mkdir -p serve plugin-root/scripts plugin-root/.claude-plugin
+          cp "$archive" serve/
           ( cd serve && sha256sum ./*.tar.gz | sed 's|\./||' > checksums.txt )
+
+          cp plugins/prayops/scripts/setup.sh plugin-root/scripts/
+          cp plugins/prayops/.claude-plugin/plugin.json plugin-root/.claude-plugin/
+          sed "s/\"runtimeVersion\"[[:space:]]*:[[:space:]]*\"[^\"]*\"/\"runtimeVersion\": \"$snapshot\"/" \
+            plugins/prayops/runtime-manifest.json > plugin-root/runtime-manifest.json
+
           ( cd serve && python3 -m http.server 8099 >/dev/null 2>&1 & echo $! > /tmp/serve.pid )
           sleep 2
 
-          CLAUDE_PLUGIN_ROOT="$PWD/plugins/prayops" \
+          CLAUDE_PLUGIN_ROOT="$PWD/plugin-root" \
           CLAUDE_PLUGIN_DATA="$PWD/plugin-data" \
           PRAYOPS_RELEASE_BASE_URL="http://127.0.0.1:8099" \
-            ./plugins/prayops/scripts/setup.sh --yes
+            ./plugin-root/scripts/setup.sh --yes
 
           kill "$(cat /tmp/serve.pid)"
+
+          # It runs, and nothing but the binary was extracted.
           ./plugin-data/bin/prayops version --json
+          for name in LICENSE README.md CHANGELOG.md; do
+            if [ -e "plugin-data/bin/$name" ] || [ -e "plugin-data/$name" ]; then
+              echo "$name was extracted from the archive" >&2
+              exit 1
+            fi
+          done
