@@ -23,7 +23,26 @@ import (
 	"testing"
 )
 
-const version = "0.1.0" // must match plugins/prayops/runtime-manifest.json
+// updatedVersion is the release the update test pretends a newer plugin ships.
+// It is deliberately unrelated to the real version so bumping one does not
+// silently turn the update test into a no-op.
+const updatedVersion = "99.0.0"
+
+// version is read from the manifest rather than hardcoded, so bumping a
+// release does not break the suite that guards it.
+var version = func() string {
+	raw, err := os.ReadFile("../../plugins/prayops/runtime-manifest.json")
+	if err != nil {
+		panic(err)
+	}
+	var manifest struct {
+		RuntimeVersion string `json:"runtimeVersion"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		panic(err)
+	}
+	return manifest.RuntimeVersion
+}()
 
 // world is one user's machine: a plugin root, a plugin data directory, a
 // Claude config directory, and a release server.
@@ -356,12 +375,12 @@ func TestUpdateEndToEnd(t *testing.T) {
 	// one is not edited.
 	newRoot := t.TempDir()
 	copyTree(t, w.pluginRoot, newRoot)
-	writeManifestVersion(t, newRoot, "0.2.0")
+	writeManifestVersion(t, newRoot, updatedVersion)
 	w.pluginRoot = newRoot
 
 	// Acceptance 6: doctor reports the mismatch and says what to do.
 	health := w.runtime("", "doctor")
-	if !strings.Contains(health.output, "0.2.0") || !strings.Contains(health.output, "0.1.0") {
+	if !strings.Contains(health.output, updatedVersion) || !strings.Contains(health.output, version) {
 		t.Fatalf("doctor does not report the mismatch:\n%s", health.output)
 	}
 	if !strings.Contains(health.output, "/prayops:setup") {
@@ -373,7 +392,7 @@ func TestUpdateEndToEnd(t *testing.T) {
 	if plan.code != 10 {
 		t.Fatalf("update plan exit = %d\n%s", plan.code, plan.output)
 	}
-	if !strings.Contains(plan.output, "Updating from v0.1.0 to v0.2.0") {
+	if !strings.Contains(plan.output, "Updating from v"+version+" to v"+updatedVersion) {
 		t.Fatalf("the plan does not describe an update:\n%s", plan.output)
 	}
 	if got := w.runtime("", "version"); !strings.Contains(got.output, version) {
@@ -382,7 +401,7 @@ func TestUpdateEndToEnd(t *testing.T) {
 
 	// Acceptance 5: an update whose checksum does not match must not replace
 	// the working runtime.
-	w.releaseURL = w.serveCorrupt("0.2.0")
+	w.releaseURL = w.serveCorrupt(updatedVersion)
 	if got := w.script("setup.sh", "--yes"); got.code != 13 {
 		t.Fatalf("corrupt update exit = %d, want 13\n%s", got.code, got.output)
 	}
@@ -391,11 +410,11 @@ func TestUpdateEndToEnd(t *testing.T) {
 	}
 
 	// A good update succeeds and the version moves.
-	w.releaseURL = w.serveRelease(buildRuntime(t, "0.2.0"))
+	w.releaseURL = w.serveRelease(buildRuntime(t, updatedVersion))
 	if got := w.script("setup.sh", "--yes"); got.code != 0 {
 		t.Fatalf("update: exit %d\n%s", got.code, got.output)
 	}
-	if got := w.runtime("", "version"); !strings.Contains(got.output, "0.2.0") {
+	if got := w.runtime("", "version"); !strings.Contains(got.output, updatedVersion) {
 		t.Fatalf("version after update = %q", got.output)
 	}
 

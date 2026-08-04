@@ -8,6 +8,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -19,10 +20,28 @@ import (
 	"testing"
 )
 
-const (
-	pluginRoot     = "../../plugins/prayops"
-	runtimeVersion = "0.1.0" // must match plugins/prayops/runtime-manifest.json
-)
+const pluginRoot = "../../plugins/prayops"
+
+// runtimeVersion is read from the manifest rather than hardcoded, so bumping a
+// release does not break the suite that guards it.
+var runtimeVersion = manifestVersion()
+
+func manifestVersion() string {
+	raw, err := os.ReadFile(filepath.Join(pluginRoot, "runtime-manifest.json"))
+	if err != nil {
+		panic(err)
+	}
+	var manifest struct {
+		RuntimeVersion string `json:"runtimeVersion"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		panic(err)
+	}
+	if manifest.RuntimeVersion == "" {
+		panic("runtime-manifest.json has no runtimeVersion")
+	}
+	return manifest.RuntimeVersion
+}
 
 // fakeRuntime is a stand-in for the Go binary. The installer only executes the
 // two commands it needs to trust a download, so a script is enough.

@@ -10,8 +10,8 @@
 
 1. Claude Code plugin
 2. `/prayops:*` skills
-3. compact status line
-4. 별도 full TUI `prayops watch`
+3. Claude Code 상태줄에 그려지는 향로 — **주 표면**
+4. 별도 full TUI `prayops watch` — 큰 화면용 부가 기능
 
 Go CLI만 단독으로 설치하도록 요구하지 않는다. CLI는 plugin이 사용하는 runtime이자 고급 사용자 표면이다.
 
@@ -52,7 +52,10 @@ runtime 다운로드는 명시적 first-use에서만 발생하고 checksum을 �
 
 ### 시각적 만족
 
-full TUI에서 향 연기와 prayer dissolve를 본다.
+Claude Code 상태줄에 향로와 연기가 그려지고, 기도를 올리면 향로 주변에 기도
+이모지가 뿌려진다. 별도 터미널을 열 필요가 없다.
+
+`prayops watch`는 큰 화면에서 이미지 dissolve까지 보고 싶을 때 쓰는 부가 기능이다.
 
 ### Privacy
 

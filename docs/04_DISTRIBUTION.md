@@ -150,7 +150,7 @@ plugin default settings로 user statusLine을 강제할 수 없으므로 setup r
 
 Plugin monitor는 stdout line을 Claude notification으로 전달하는 용도다.
 
-PrayOps full TUI 표면으로 사용하지 않는다.
+PrayOps 표면으로 사용하지 않는다. 향로는 상태줄에 그린다.
 
 ## 13. 공식 marketplace
 
