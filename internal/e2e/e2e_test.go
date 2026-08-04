@@ -88,13 +88,30 @@ func (w *world) serveRelease(binary string) string {
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(zw)
-	if err := tw.WriteHeader(&tar.Header{
-		Name: "prayops", Mode: 0o755, Size: int64(len(body)), Typeflag: tar.TypeReg,
-	}); err != nil {
-		w.t.Fatalf("tar header: %v", err)
+
+	// GoReleaser adds the licence, readme and changelog by convention, and a
+	// release built without them would not be the release users install. An
+	// archive here that held only the binary is what let a v0.1.0 ship that no
+	// bootstrap could install.
+	entries := []struct {
+		name string
+		body []byte
+		mode int64
+	}{
+		{"CHANGELOG.md", []byte("## v0.1.0\n"), 0o644},
+		{"LICENSE", []byte("MIT\n"), 0o644},
+		{"README.md", []byte("# PrayOps\n"), 0o644},
+		{"prayops", body, 0o755},
 	}
-	if _, err := tw.Write(body); err != nil {
-		w.t.Fatalf("tar write: %v", err)
+	for _, e := range entries {
+		if err := tw.WriteHeader(&tar.Header{
+			Name: e.name, Mode: e.mode, Size: int64(len(e.body)), Typeflag: tar.TypeReg,
+		}); err != nil {
+			w.t.Fatalf("tar header %s: %v", e.name, err)
+		}
+		if _, err := tw.Write(e.body); err != nil {
+			w.t.Fatalf("tar write %s: %v", e.name, err)
+		}
 	}
 	if err := tw.Close(); err != nil {
 		w.t.Fatalf("tar close: %v", err)
@@ -218,6 +235,13 @@ func TestInstallationEndToEnd(t *testing.T) {
 	}
 
 	w.install()
+
+	// Only the binary landed; the rest of the archive stayed in it.
+	for _, name := range []string{"LICENSE", "README.md", "CHANGELOG.md"} {
+		if _, err := os.Stat(filepath.Join(w.data, "bin", name)); !os.IsNotExist(err) {
+			t.Fatalf("%s was extracted from the archive", name)
+		}
+	}
 
 	// The installed binary is the real one and reports the release version.
 	got := w.runtime("", "version", "--json")

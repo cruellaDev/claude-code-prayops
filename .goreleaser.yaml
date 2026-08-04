@@ -23,9 +23,11 @@ archives:
   - id: default
     formats: [tar.gz]
     name_template: "prayops_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    # The bootstrap rejects any archive entry other than the binary, so keep
-    # GoReleaser from adding its default readme/license files.
-    files: []
+    # GoReleaser also adds the licence, readme and changelog by convention.
+    # They are left in - the bootstrap extracts only the binary - so the
+    # archive carries its own licence. `files: []` does not suppress them: an
+    # empty list reads as unset, and the defaults apply anyway. That is what
+    # shipped a v0.1.0 archive the installer refused.
 
 checksum:
   name_template: checksums.txt

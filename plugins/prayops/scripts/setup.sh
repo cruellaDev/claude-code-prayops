@@ -236,26 +236,42 @@ EOF
 fi
 echo "SHA-256 verified."
 
-# The archive must contain the binary and nothing else. Reject absolute paths,
-# parent traversal, and any entry that is not a regular file.
+# Validate every archive entry, then extract only the binary.
+#
+# The rule is about where an entry could land, not about which files a release
+# happens to carry: archive tools add licence and readme files by convention,
+# and refusing those makes a correct release uninstallable. Anything that could
+# escape the work directory - an absolute path, a parent traversal, a
+# subdirectory, a link - is still refused outright.
 listing="$(tar -tzf "$WORK/$ASSET")" || {
   echo "PrayOps: could not read the release archive." >&2
   exit 14
 }
+
+found_binary=0
 for entry in $listing; do
   case "$entry" in
-    prayops) ;;
-    *)
-      echo "PrayOps: refusing archive - unexpected entry '$entry'." >&2
+    prayops) found_binary=1 ;;
+    /* | *..* | */*)
+      echo "PrayOps: refusing archive - entry '$entry' could escape the install directory." >&2
       exit 14
       ;;
   esac
 done
+
+if [ "$found_binary" -ne 1 ]; then
+  echo "PrayOps: refusing archive - it does not contain a prayops binary." >&2
+  exit 14
+fi
+
+# Every entry must be a regular file. tar -tv prints the mode, and only a
+# regular file starts with a dash.
 if tar -tvzf "$WORK/$ASSET" | grep -qv '^-'; then
   echo "PrayOps: refusing archive - it contains a link or directory entry." >&2
   exit 14
 fi
 
+# Only the binary is extracted, so anything else in the archive never lands.
 tar -xzf "$WORK/$ASSET" -C "$WORK" prayops
 chmod 755 "$WORK/prayops"
 

@@ -74,17 +74,72 @@ jobs:
           version: "~> v2"
           args: release --snapshot --clean --skip=publish
 
-      - name: Archives match the runtime manifest
+      # Checking the archive names alone once let a release ship that no
+      # bootstrap could install: the archive carried a CHANGELOG the entry
+      # allowlist refused. The contents are checked too now.
+      - name: Archives match the runtime manifest and the bootstrap
         run: |
           set -eu
           template="$(sed -n 's/.*"assetTemplate"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' \
             plugins/prayops/runtime-manifest.json)"
           test -f dist/checksums.txt
+
           for target in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64; do
             os="${target%_*}"
             arch="${target#*_}"
             expected="$(printf '%s' "$template" \
               | sed -e "s/{version}/*/" -e "s/{os}/$os/" -e "s/{arch}/$arch/")"
+
             # shellcheck disable=SC2086
-            ls dist/$expected >/dev/null
+            archive="$(ls dist/$expected)"
+            echo "checking $archive"
+
+            listing="$(tar -tzf "$archive")"
+            case "$listing" in
+              *prayops*) ;;
+              *) echo "$archive has no prayops binary" >&2; exit 1 ;;
+            esac
+
+            # The bootstrap refuses anything that could land outside the
+            # install directory, so a release carrying one is unusable.
+            for entry in $listing; do
+              case "$entry" in
+                /* | *..* | */*)
+                  echo "$archive contains '$entry', which the bootstrap refuses" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+
+            # Every entry has to be a regular file, same rule as the installer.
+            if tar -tvzf "$archive" | grep -qv '^-'; then
+              echo "$archive contains a link or directory entry" >&2
+              exit 1
+            fi
           done
+
+      # The strongest check available: install from the archives just built,
+      # using the shipped bootstrap, exactly as a user would.
+      - name: The bootstrap can install what GoReleaser produced
+        run: |
+          set -eu
+          version="$(sed -n 's/.*"runtimeVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+            plugins/prayops/runtime-manifest.json)"
+
+          # Serve dist/ as if it were the release, renaming the snapshot
+          # archives to the versions the manifest asks for.
+          mkdir -p serve
+          for f in dist/prayops_*_linux_amd64.tar.gz; do
+            cp "$f" "serve/prayops_${version}_linux_amd64.tar.gz"
+          done
+          ( cd serve && sha256sum ./*.tar.gz | sed 's|\./||' > checksums.txt )
+          ( cd serve && python3 -m http.server 8099 >/dev/null 2>&1 & echo $! > /tmp/serve.pid )
+          sleep 2
+
+          CLAUDE_PLUGIN_ROOT="$PWD/plugins/prayops" \
+          CLAUDE_PLUGIN_DATA="$PWD/plugin-data" \
+          PRAYOPS_RELEASE_BASE_URL="http://127.0.0.1:8099" \
+            ./plugins/prayops/scripts/setup.sh --yes
+
+          kill "$(cat /tmp/serve.pid)"
+          ./plugin-data/bin/prayops version --json
