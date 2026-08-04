@@ -33,6 +33,37 @@ if [ -z "$PLUGIN_DATA" ]; then
   exit 1
 fi
 
+# CLAUDE_PLUGIN_DATA comes from the environment, and a skill's Bash command
+# inherits whatever the session happens to hold - which is sometimes another
+# plugin's directory. Installing there puts PrayOps inside somebody else's
+# plugin, which is how the first real install went.
+#
+# Claude Code names these directories <marketplace>-<plugin> and creates ours
+# before the skill runs, so when the name does not mention prayops but a
+# sibling does, the sibling is the real one. With no sibling to correct to,
+# the path is taken as given: that is what a manual run with a custom
+# directory looks like, and guessing would be worse than obeying.
+case "$(basename "$PLUGIN_DATA")" in
+  *prayops*) ;;
+  *)
+    found=""
+    count=0
+    for candidate in "$(dirname "$PLUGIN_DATA")"/*prayops*; do
+      [ -d "$candidate" ] || continue
+      found="$candidate"
+      count=$((count + 1))
+    done
+
+    if [ "$count" -eq 1 ]; then
+      cat >&2 <<EOF
+PrayOps: CLAUDE_PLUGIN_DATA pointed at $PLUGIN_DATA, which belongs to another
+plugin. Installing into $found instead.
+EOF
+      PLUGIN_DATA="$found"
+    fi
+    ;;
+esac
+
 MANIFEST="$PLUGIN_ROOT/runtime-manifest.json"
 if [ ! -f "$MANIFEST" ]; then
   echo "PrayOps: runtime manifest not found at $MANIFEST" >&2

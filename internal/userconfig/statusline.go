@@ -27,6 +27,11 @@ type StatusLine struct {
 }
 
 // NewStatusLine returns the settings value for an installed runtime.
+//
+// refreshInterval is 1 because the censer's smoke drifts and a prayer's emoji
+// thin out over a few seconds; without it the scene would only move when
+// Claude Code happened to fire an event. One second is the minimum Claude Code
+// accepts, and also the fastest the scene can meaningfully change.
 func NewStatusLine(runtimePath string) StatusLine {
 	return StatusLine{
 		Type:            "command",

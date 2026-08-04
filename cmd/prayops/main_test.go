@@ -210,8 +210,30 @@ func TestStatuslineRendersItsOwnSession(t *testing.T) {
 	if strings.Contains(stdout, "ENDED") {
 		t.Fatalf("status line showed another session: %q", stdout)
 	}
+	// The censer is drawn as several rows; the last one carries the text.
+	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("the censer was not drawn: %q", stdout)
+	}
+	if !strings.Contains(lines[len(lines)-1], "THINKING") {
+		t.Fatalf("the last row is not the status text: %q", lines[len(lines)-1])
+	}
+}
+
+// A terminal too narrow for the censer still gets the one-line status.
+func TestStatuslineFallsBackWhenNarrow(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("CLAUDE_PLUGIN_DATA", data)
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("COLUMNS", "18")
+
+	if code, _, _ := exec(t, `{"session_id":"s1","hook_event_name":"PreToolUse"}`, "hook", "claude"); code != 0 {
+		t.Fatal("hook failed")
+	}
+
+	_, stdout, _ := exec(t, `{"session_id":"s1"}`, "statusline", "claude")
 	if strings.Count(stdout, "\n") != 1 {
-		t.Fatalf("status line is not exactly one line: %q", stdout)
+		t.Fatalf("a narrow terminal got more than one line: %q", stdout)
 	}
 }
 

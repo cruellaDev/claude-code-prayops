@@ -200,7 +200,9 @@ Runtime:
 
 ## 12. Full watch
 
-`prayops watch`는 별도 terminal에서 실행한다.
+향로의 주 표면은 Claude Code 상태줄이다. `prayops watch`는 큰 화면에서
+이미지 dissolve까지 보려는 사용자를 위한 부가 기능이며, 별도 terminal에서
+실행한다.
 
 Claude Code skill은 command만 안내한다.
 

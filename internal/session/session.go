@@ -64,6 +64,7 @@ func Reduce(state contracts.SessionState, event contracts.RitualEvent) contracts
 	case contracts.EventPrayerRequested:
 		// A prayer is an overlay on whatever the session is doing, so the
 		// phase is left alone.
+		state.LastPrayerAt = event.OccurredAt
 		state.PrayerQueue = enqueuePrayer(state.PrayerQueue, prayerFrom(event))
 	}
 

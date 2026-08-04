@@ -8,6 +8,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -19,10 +20,28 @@ import (
 	"testing"
 )
 
-const (
-	pluginRoot     = "../../plugins/prayops"
-	runtimeVersion = "0.1.0" // must match plugins/prayops/runtime-manifest.json
-)
+const pluginRoot = "../../plugins/prayops"
+
+// runtimeVersion is read from the manifest rather than hardcoded, so bumping a
+// release does not break the suite that guards it.
+var runtimeVersion = manifestVersion()
+
+func manifestVersion() string {
+	raw, err := os.ReadFile(filepath.Join(pluginRoot, "runtime-manifest.json"))
+	if err != nil {
+		panic(err)
+	}
+	var manifest struct {
+		RuntimeVersion string `json:"runtimeVersion"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		panic(err)
+	}
+	if manifest.RuntimeVersion == "" {
+		panic("runtime-manifest.json has no runtimeVersion")
+	}
+	return manifest.RuntimeVersion
+}
 
 // fakeRuntime is a stand-in for the Go binary. The installer only executes the
 // two commands it needs to trust a download, so a script is enough.
@@ -500,5 +519,78 @@ func TestSupportedPlatformIgnoresKeyOrder(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(data, "bin", "prayops")); statErr != nil {
 		t.Fatalf("nothing was installed: %v\n%s", statErr, out)
+	}
+}
+
+// CLAUDE_PLUGIN_DATA arrives from the environment, and a skill's Bash command
+// inherits whatever the session has - which in practice is sometimes another
+// plugin's data directory. Installing there would put PrayOps inside somebody
+// else's plugin.
+func TestForeignPluginDataIsCorrected(t *testing.T) {
+	root, err := filepath.Abs(pluginRoot)
+	if err != nil {
+		t.Fatalf("resolve plugin root: %v", err)
+	}
+
+	// A data root holding several plugins' directories, ours among them.
+	dataRoot := t.TempDir()
+	ours := filepath.Join(dataRoot, "prayops-prayops")
+	theirs := filepath.Join(dataRoot, "codex-openai-codex")
+	for _, dir := range []string{ours, theirs} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+
+	cmd := exec.Command(filepath.Join(root, "scripts", "setup.sh"), "--yes")
+	cmd.Env = append(os.Environ(),
+		"CLAUDE_PLUGIN_ROOT="+root,
+		"CLAUDE_PLUGIN_DATA="+theirs, // the leak
+		"PRAYOPS_RELEASE_BASE_URL="+release(t, goodArchive(t), false),
+	)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+
+	if _, err := os.Stat(filepath.Join(ours, "bin", "prayops")); err != nil {
+		t.Fatalf("did not install into our own data directory: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(theirs, "bin", "prayops")); !os.IsNotExist(err) {
+		t.Fatalf("installed into another plugin's directory\n%s", out)
+	}
+	if !strings.Contains(string(out), "codex-openai-codex") {
+		t.Fatalf("the correction was silent; the user should be told:\n%s", out)
+	}
+}
+
+// With no PrayOps directory beside it, the path is obeyed - that is what a
+// manual run with a custom directory looks like, and guessing would be worse.
+func TestACustomDataDirectoryIsObeyed(t *testing.T) {
+	root, err := filepath.Abs(pluginRoot)
+	if err != nil {
+		t.Fatalf("resolve plugin root: %v", err)
+	}
+
+	dataRoot := t.TempDir()
+	theirs := filepath.Join(dataRoot, "codex-openai-codex")
+	if err := os.MkdirAll(theirs, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	cmd := exec.Command(filepath.Join(root, "scripts", "setup.sh"), "--yes")
+	cmd.Env = append(os.Environ(),
+		"CLAUDE_PLUGIN_ROOT="+root,
+		"CLAUDE_PLUGIN_DATA="+theirs,
+		"PRAYOPS_RELEASE_BASE_URL="+release(t, goodArchive(t), false),
+	)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("a custom data directory was refused: %v\n%s", err, out)
+	}
+	if _, statErr := os.Stat(filepath.Join(theirs, "bin", "prayops")); statErr != nil {
+		t.Fatalf("did not install where it was told: %v\n%s", statErr, out)
 	}
 }

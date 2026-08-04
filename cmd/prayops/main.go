@@ -161,10 +161,26 @@ func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		return 0
 	}
 
-	fmt.Fprintln(stdout, statusline.Render(state, statusline.Options{
+	// The censer is the point of the plugin, so it is drawn here rather than
+	// only in a separate watcher the user has to open. Claude Code renders one
+	// row per line the command prints.
+	opts := statusline.SceneOptions{
 		Now:     time.Now(),
 		Columns: terminalColumns(),
 		Color:   os.Getenv("NO_COLOR") == "",
+		Motion:  os.Getenv("NO_COLOR") == "" && os.Getenv("PRAYOPS_MOTION") != "off",
+	}
+
+	if lines := statusline.Scene(state, opts); lines != nil {
+		for _, line := range lines {
+			fmt.Fprintln(stdout, line)
+		}
+		return 0
+	}
+
+	// Too narrow for the censer: the single compact line still fits.
+	fmt.Fprintln(stdout, statusline.Render(state, statusline.Options{
+		Now: opts.Now, Columns: opts.Columns, Color: opts.Color,
 	}))
 	return 0
 }
@@ -365,9 +381,13 @@ func runPray(args []string, stdout, stderr io.Writer) int {
 		},
 	}
 
-	// The spool only: a prayer is for the watcher, and writing it to the
-	// session file would leave it queued forever when no watcher is running.
+	// The spool feeds the watcher's dissolve; the session file feeds the
+	// status line, which is where most people will actually see this.
 	if err := spool.New(stateDir).Write(event); err != nil {
+		fmt.Fprintf(stderr, "prayops: %v\n", err)
+		return 1
+	}
+	if _, err := session.NewSessions(stateDir).Record(event); err != nil {
 		fmt.Fprintf(stderr, "prayops: %v\n", err)
 		return 1
 	}
