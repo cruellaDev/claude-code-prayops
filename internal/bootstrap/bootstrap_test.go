@@ -272,6 +272,54 @@ func TestChecksumMismatchPreservesExistingRuntime(t *testing.T) {
 	}
 }
 
+// A release archive carries licence and readme files by convention. Refusing
+// them made a correctly built release uninstallable, so they are allowed - and
+// simply not extracted.
+func TestConventionalExtraFilesAreAccepted(t *testing.T) {
+	data := t.TempDir()
+
+	archive := tarGz(t, []entry{
+		{name: "prayops", body: fmt.Sprintf(fakeRuntime, runtimeVersion)},
+		{name: "LICENSE", body: "MIT"},
+		{name: "README.md", body: "# PrayOps"},
+		{name: "CHANGELOG.md", body: "## v0.1.0"},
+	})
+
+	got := setup(t, release(t, archive, false), data, "--yes")
+	if got.code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", got.code, got.output)
+	}
+	if !got.installed() {
+		t.Fatalf("nothing was installed\n%s", got.output)
+	}
+
+	// Only the binary lands; the rest of the archive is left behind.
+	for _, name := range []string{"LICENSE", "README.md", "CHANGELOG.md"} {
+		if _, err := os.Stat(filepath.Join(data, "bin", name)); !os.IsNotExist(err) {
+			t.Fatalf("%s was extracted into the install directory", name)
+		}
+		if _, err := os.Stat(filepath.Join(data, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s was extracted into the plugin data directory", name)
+		}
+	}
+}
+
+// An archive with no binary in it must not be treated as a successful install.
+func TestArchiveWithoutTheBinaryIsRejected(t *testing.T) {
+	data := t.TempDir()
+	sentinel := plantRuntime(t, data)
+
+	archive := tarGz(t, []entry{{name: "README.md", body: "# PrayOps"}})
+	got := setup(t, release(t, archive, false), data, "--yes")
+
+	if got.code != 14 {
+		t.Fatalf("exit = %d, want 14\n%s", got.code, got.output)
+	}
+	if got.binaryContents(t) != sentinel {
+		t.Fatal("an archive with no binary replaced the runtime")
+	}
+}
+
 // NFR-003: archive entries are validated before extraction.
 func TestMaliciousArchivesAreRejected(t *testing.T) {
 	cases := map[string][]entry{
@@ -287,9 +335,9 @@ func TestMaliciousArchivesAreRejected(t *testing.T) {
 			{name: "prayops", body: "#!/bin/sh\n"},
 			{name: "link", typeFlag: tar.TypeSymlink, linkname: "/etc/passwd"},
 		},
-		"unexpected extra file": {
+		"subdirectory": {
 			{name: "prayops", body: "#!/bin/sh\n"},
-			{name: "install.sh", body: "owned"},
+			{name: "extras/install.sh", body: "owned"},
 		},
 	}
 
