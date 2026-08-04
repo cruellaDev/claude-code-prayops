@@ -88,14 +88,23 @@ func New(opts Options) *Model {
 		seed = uint64(opts.Now().UnixNano())
 	}
 
+	events := spool.New(opts.StateDir)
+	events.SetClock(opts.Now)
+
 	return &Model{
 		opts:   opts,
-		events: spool.New(opts.StateDir),
+		events: events,
 		store:  session.NewStore(),
-		cache:  prayer.New(opts.StateDir),
+		cache:  newCache(opts),
 		smoke:  smoke.New(seed),
 		layout: layout.Compute(80, 24),
 	}
+}
+
+func newCache(opts Options) *prayer.Cache {
+	cache := prayer.New(opts.StateDir)
+	cache.SetClock(opts.Now)
+	return cache
 }
 
 // State returns the session currently being displayed.
@@ -247,8 +256,23 @@ func (m *Model) tick() tea.Cmd {
 // Init starts the animation loop.
 func (m *Model) Init() tea.Cmd {
 	m.startHeartbeat()
+	m.collect()
 	return m.tick()
 }
+
+// collect discards quarantined events and files left by crashed hooks.
+//
+// Nothing else removes them, so without this a single corrupt event would
+// leave doctor reporting the same warning for the life of the installation.
+// The watcher does it because it is the only long-running process, and it does
+// it once at startup so a frame never pays for it.
+func (m *Model) collect() {
+	_ = m.events.Cleanup(StaleAfter)
+	_ = m.cache.Cleanup(StaleAfter)
+}
+
+// StaleAfter is how long a quarantined event or an unshown prayer is kept.
+const StaleAfter = 24 * time.Hour
 
 // Update handles resize, keys, and the frame tick.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

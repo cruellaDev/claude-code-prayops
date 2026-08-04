@@ -102,11 +102,20 @@ func runHook(args []string, stdin io.Reader) int {
 	// status line. Both are written here because the hook is the only writer
 	// guaranteed to run - a status line that depended on the watcher would
 	// show nothing whenever no watcher is attached.
+	failed := false
 	if err := spool.New(stateDir).Write(event); err != nil {
 		recordHookError(err)
+		failed = true
 	}
 	if _, err := session.NewSessions(stateDir).Record(event); err != nil {
 		recordHookError(err)
+		failed = true
+	}
+
+	if !failed {
+		// Doctor reads the recorded failure, so leaving one behind would keep
+		// reporting an installation as unhealthy long after it recovered.
+		clearHookError(stateDir)
 	}
 	return 0
 }
@@ -324,8 +333,10 @@ func runPray(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "prayops: %v\n", err)
 		return 1
 	}
-	// Prayers nobody watched would otherwise pile up forever.
-	_ = cache.Cleanup(24 * time.Hour)
+	// Prayers nobody watched, and events quarantined by a reader that may
+	// never run, would otherwise pile up forever.
+	_ = cache.Cleanup(watch.StaleAfter)
+	_ = spool.New(stateDir).Cleanup(watch.StaleAfter)
 
 	projectKey := hook.ProjectKey(*cwd)
 	sessionID := "prayer"
@@ -540,8 +551,16 @@ func recordHookError(cause error) {
 		return
 	}
 	line := fmt.Sprintf("%s %v\n", time.Now().UTC().Format(time.RFC3339), cause)
-	_ = os.WriteFile(filepath.Join(dir, "hook-last-error.txt"), []byte(line), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, hookErrorFile), []byte(line), 0o600)
 }
+
+// clearHookError forgets the last failure once a hook succeeds again.
+func clearHookError(stateDir string) {
+	_ = os.Remove(filepath.Join(stateDir, hookErrorFile))
+}
+
+// hookErrorFile is where the last hook failure is left for doctor.
+const hookErrorFile = "hook-last-error.txt"
 
 func runVersion(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("version", flag.ContinueOnError)

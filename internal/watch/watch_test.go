@@ -373,3 +373,38 @@ func TestMissingCacheEntryIsSkipped(t *testing.T) {
 		t.Fatal("the missing prayer stayed queued")
 	}
 }
+
+// Nothing else collects quarantined events or the files a crashed hook leaves
+// behind, so doctor would report the same warning forever.
+func TestStartupCollectsStaleFiles(t *testing.T) {
+	m, _ := newModel(t)
+
+	stale := filepath.Join(m.opts.StateDir, "events", "rejected", "bad.json")
+	if err := os.MkdirAll(filepath.Dir(stale), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(stale, []byte("{"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	old := base.Add(-48 * time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	fresh := filepath.Join(m.opts.StateDir, "events", "rejected", "recent.json")
+	if err := os.WriteFile(fresh, []byte("{"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Chtimes(fresh, base, base); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	m.collect()
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatal("a stale quarantined event survived startup")
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatalf("startup collected a recent quarantined event: %v", err)
+	}
+}

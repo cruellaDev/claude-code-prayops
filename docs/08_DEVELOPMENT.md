@@ -7,13 +7,17 @@
 | Runtime | Go 1.26 |
 | TUI | Bubble Tea v2 |
 | Style | Lip Gloss |
-| CLI | Cobra |
+| CLI | stdlib `flag` |
 | Width | go-runewidth 계열 |
 | WebP | golang.org/x/image/webp |
-| Test | stdlib + go-cmp |
+| Test | stdlib |
 | Release | GoReleaser |
 | CI | GitHub Actions |
 | Bootstrap | POSIX shell v0.1 |
+
+CLI는 원래 Cobra를 지정했으나 stdlib `flag`로 구현했다. 명령이 7개지만 각 명령의 플래그가 1~4개로 단순하고 shell completion 요구가 없어, 프레임워크가 주는 이득보다 의존성 하나가 릴리즈 아카이브와 공급망 검토에 더해지는 비용이 컸다. 하위 명령 트리가 깊어지거나 completion이 필요해지면 다시 검토한다.
+
+테스트는 go-cmp 없이 stdlib만 쓴다. 비교 대상이 대부분 문자열·정수·작은 구조체라 diff 출력이 필요한 지점이 없었다.
 
 ## 2. 구조
 

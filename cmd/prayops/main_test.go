@@ -400,3 +400,28 @@ func TestUnimplementedAndUnknownCommandsFail(t *testing.T) {
 		})
 	}
 }
+
+// A hook that recovers must clear the record of its last failure. Otherwise
+// one transient error marks the installation unhealthy in doctor forever,
+// long after everything works again.
+func TestASuccessfulHookClearsTheLastError(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("CLAUDE_PLUGIN_DATA", data)
+	errorFile := filepath.Join(data, "state", "hook-last-error.txt")
+
+	if code, _, _ := exec(t, `{"hook_event_name":"Notification"}`, "hook", "claude"); code != 0 {
+		t.Fatalf("hook exit = %d", code)
+	}
+	if _, err := os.Stat(errorFile); err != nil {
+		t.Fatalf("the failure was not recorded: %v", err)
+	}
+
+	if code, _, _ := exec(t, `{"session_id":"s1","hook_event_name":"Stop"}`, "hook", "claude"); code != 0 {
+		t.Fatalf("hook exit = %d", code)
+	}
+
+	if _, err := os.Stat(errorFile); !os.IsNotExist(err) {
+		raw, _ := os.ReadFile(errorFile)
+		t.Fatalf("a stale failure survived a successful hook: %q", raw)
+	}
+}
