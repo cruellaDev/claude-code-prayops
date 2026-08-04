@@ -362,23 +362,6 @@ func TestConcurrentWritesDoNotCollide(t *testing.T) {
 	}
 }
 
-func TestFromEnvNeedsPluginData(t *testing.T) {
-	t.Setenv("CLAUDE_PLUGIN_DATA", "")
-	if _, err := FromEnv(); err != ErrNoPluginData {
-		t.Fatalf("err = %v, want ErrNoPluginData", err)
-	}
-
-	data := t.TempDir()
-	t.Setenv("CLAUDE_PLUGIN_DATA", data)
-	s, err := FromEnv()
-	if err != nil {
-		t.Fatalf("FromEnv: %v", err)
-	}
-	if s.root != filepath.Join(data, "state", "events") {
-		t.Fatalf("root = %q", s.root)
-	}
-}
-
 // NFR-001 budgets a hook at 100ms end to end, and the write is the only part
 // that touches the disk.
 func BenchmarkWrite(b *testing.B) {

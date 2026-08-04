@@ -392,3 +392,75 @@ func TestQuantiseForReducedMotion(t *testing.T) {
 		t.Fatal("quantise is not clamped")
 	}
 }
+
+// NFR-004 / docs 06 §17: with reduced motion the dissolve reads as a few
+// deliberate steps instead of a smooth fade.
+func TestReducedMotionStepsTheDissolve(t *testing.T) {
+	tl := NewTimeline(0)
+	smooth := NewMask(4242, tl)
+	stepped := smooth.Reduced()
+
+	// Count how many distinct pictures each mask produces while dissolving.
+	distinct := func(m Mask) int {
+		seen := map[string]bool{}
+		start := tl.FadeIn + tl.Hold
+
+		for elapsed := start; elapsed < start+tl.Dissolve; elapsed += 10 * time.Millisecond {
+			var frame []byte
+			for y := 0; y < 4; y++ {
+				for x := 0; x < 12; x++ {
+					if m.Visible(x, y, elapsed) {
+						frame = append(frame, '#')
+						continue
+					}
+					frame = append(frame, ' ')
+				}
+			}
+			seen[string(frame)] = true
+		}
+		return len(seen)
+	}
+
+	steppedFrames, smoothFrames := distinct(stepped), distinct(smooth)
+
+	if steppedFrames > Steps+1 {
+		t.Fatalf("reduced motion produced %d distinct frames, want at most %d", steppedFrames, Steps+1)
+	}
+	if steppedFrames >= smoothFrames {
+		t.Fatalf("reduced motion is not calmer: %d frames vs %d", steppedFrames, smoothFrames)
+	}
+	if steppedFrames < 2 {
+		t.Fatalf("reduced motion produced %d frames; the dissolve never happens", steppedFrames)
+	}
+}
+
+// Reducing motion coarsens the dissolve, it does not change it into another
+// effect. Quantising rounds down, so the stepped mask always lags the smooth
+// one and never runs ahead of it - and both end empty.
+func TestReducedMotionLagsButNeverLeads(t *testing.T) {
+	tl := NewTimeline(0)
+	smooth := NewMask(99, tl)
+	stepped := smooth.Reduced()
+
+	start := tl.FadeIn + tl.Hold
+	for elapsed := start; elapsed < start+tl.Dissolve; elapsed += 5 * time.Millisecond {
+		for y := 0; y < 4; y++ {
+			for x := 0; x < 12; x++ {
+				if smooth.Visible(x, y, elapsed) && !stepped.Visible(x, y, elapsed) {
+					t.Fatalf("cell (%d,%d) is gone under reduced motion but still there without it, at %v",
+						x, y, elapsed)
+				}
+			}
+		}
+	}
+
+	// The trail clears both, whatever the pacing.
+	at := start + tl.Dissolve + tl.Trail/2
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 12; x++ {
+			if stepped.Visible(x, y, at) {
+				t.Fatalf("cell (%d,%d) survived the trail under reduced motion", x, y)
+			}
+		}
+	}
+}

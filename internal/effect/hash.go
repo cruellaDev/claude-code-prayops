@@ -55,6 +55,3 @@ func (r *rng) intN(n int) int {
 	}
 	return int(r.next() % uint64(n))
 }
-
-// float64 returns a value in [0,1).
-func (r *rng) float64() float64 { return float64(r.next()>>11) / float64(uint64(1)<<53) }

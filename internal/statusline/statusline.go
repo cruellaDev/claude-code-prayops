@@ -160,6 +160,3 @@ func colorize(line string, phase contracts.SessionPhase, color bool) string {
 func width(s string) int { return narrow.StringWidth(s) }
 
 var narrow = &runewidth.Condition{EastAsianWidth: false}
-
-// Width is exported for tests that assert the compact threshold.
-func Width(s string) int { return width(s) }

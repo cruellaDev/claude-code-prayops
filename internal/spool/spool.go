@@ -56,15 +56,6 @@ func New(stateDir string) *Spool {
 	}
 }
 
-// FromEnv returns a spool for the current Claude Code plugin data directory.
-func FromEnv() (*Spool, error) {
-	data := os.Getenv("CLAUDE_PLUGIN_DATA")
-	if data == "" {
-		return nil, ErrNoPluginData
-	}
-	return New(filepath.Join(data, "state")), nil
-}
-
 // SetClock replaces the clock. Tests use it; production does not.
 func (s *Spool) SetClock(now func() time.Time) { s.now = now }
 

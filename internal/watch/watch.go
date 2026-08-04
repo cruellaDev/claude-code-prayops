@@ -181,11 +181,16 @@ func (m *Model) stepEffect() int {
 	}
 
 	timeline := effect.NewTimeline(request.Duration)
+	mask := effect.NewMask(request.Seed, timeline)
+	if !m.opts.Motion {
+		mask = mask.Reduced()
+	}
+
 	m.active = &activeEffect{
 		cacheID:   request.Source.CacheID,
 		raster:    art,
 		placement: placement,
-		mask:      effect.NewMask(request.Seed, timeline),
+		mask:      mask,
 		timeline:  timeline,
 		started:   now,
 	}

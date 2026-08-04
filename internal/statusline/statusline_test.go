@@ -41,8 +41,8 @@ func TestCompactLineOnANarrowTerminal(t *testing.T) {
 func TestLineFitsTheTerminalWidth(t *testing.T) {
 	for columns := 12; columns <= 80; columns++ {
 		got := Render(working(0), Options{Now: now, Columns: columns})
-		if Width(got) > columns && columns >= compactBelow {
-			t.Fatalf("columns=%d produced a %d cell line: %q", columns, Width(got), got)
+		if width(got) > columns && columns >= compactBelow {
+			t.Fatalf("columns=%d produced a %d cell line: %q", columns, width(got), got)
 		}
 		if strings.Contains(got, "\n") {
 			t.Fatalf("columns=%d produced more than one line: %q", columns, got)
@@ -59,8 +59,8 @@ func TestWidthCountsWideRunes(t *testing.T) {
 		"한글":        4,
 	}
 	for input, want := range cases {
-		if got := Width(input); got != want {
-			t.Fatalf("Width(%q) = %d, want %d", input, got, want)
+		if got := width(input); got != want {
+			t.Fatalf("width(%q) = %d, want %d", input, got, want)
 		}
 	}
 }

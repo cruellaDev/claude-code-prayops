@@ -91,11 +91,28 @@ func ratio(part, whole time.Duration) float64 {
 type Mask struct {
 	seed     uint64
 	timeline Timeline
+	reduced  bool
 }
 
 // NewMask returns the mask for one effect.
 func NewMask(seed uint64, timeline Timeline) Mask {
 	return Mask{seed: seed, timeline: timeline}
+}
+
+// Reduced returns a mask that steps rather than fades, for viewers who have
+// asked for less motion. The cells that go and the order they go in are
+// unchanged; only the number of distinct frames is.
+func (m Mask) Reduced() Mask {
+	m.reduced = true
+	return m
+}
+
+// progress applies the reduced-motion quantisation, if any.
+func (m Mask) progress(raw float64) float64 {
+	if m.reduced {
+		return Quantise(raw)
+	}
+	return raw
 }
 
 // Visible reports whether the cell at (x,y) is drawn at this elapsed time.
@@ -108,11 +125,11 @@ func (m Mask) Visible(x, y int, elapsed time.Duration) bool {
 
 	switch phase {
 	case PhaseFadeIn:
-		return Hash01(m.seed, x, y, "reveal") < progress
+		return Hash01(m.seed, x, y, "reveal") < m.progress(progress)
 	case PhaseHold:
 		return true
 	case PhaseDissolve:
-		return progress < Hash01(m.seed, x, y, "dissolve")
+		return m.progress(progress) < Hash01(m.seed, x, y, "dissolve")
 	default:
 		return false
 	}
@@ -132,9 +149,9 @@ func (m Mask) Rise(x, y int, elapsed time.Duration) int {
 			return 0
 		}
 		if lift < 0.85 {
-			return int(progress + 0.5)
+			return int(m.progress(progress) + 0.5)
 		}
-		return int(progress*2 + 0.5)
+		return int(m.progress(progress)*2 + 0.5)
 	case PhaseTrail, PhaseDone:
 		return 2
 	default:
