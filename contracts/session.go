@@ -31,6 +31,11 @@ type SessionState struct {
 	// from here, so it must not move on every event within the turn.
 	TurnStartedAt time.Time `json:"turnStartedAt,omitempty"`
 
+	// LastPrayerAt is when a prayer was last sent. The status line shows the
+	// emoji for a few seconds after; the queue below belongs to the watcher,
+	// which is not always running and would otherwise hold prayers forever.
+	LastPrayerAt time.Time `json:"lastPrayerAt,omitempty"`
+
 	// ToolErrored marks that the most recent tool call failed. The reason is
 	// never stored, only the fact.
 	ToolErrored bool `json:"toolErrored,omitempty"`

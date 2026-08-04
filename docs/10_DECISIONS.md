@@ -19,9 +19,10 @@
 | D-015 | checksum을 검증한다. |
 | D-016 | install은 atomic하다. |
 | D-017 | runtime 없는 hook은 no-op이다. |
-| D-018 | status line은 opt-in이다. |
+| D-018 | status line은 opt-in이지만 제품의 주 표면이다. |
 | D-019 | 기존 statusLine을 backup·restore한다. |
-| D-020 | full TUI는 별도 `prayops watch`다. |
+| D-020 | 향로는 Claude Code 상태줄에 그린다. 상태줄은 여러 줄을 지원한다. |
+| D-020a | `prayops watch`는 큰 화면용 부가 기능이며 주 표면이 아니다. |
 | D-021 | `/prayops:watch`는 long-running Bash를 시작하지 않는다. |
 | D-022 | plugin monitor를 사용하지 않는다. |
 | D-023 | MCP server를 사용하지 않는다. |
