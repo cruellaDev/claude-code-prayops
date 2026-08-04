@@ -25,7 +25,13 @@ func Reduce(state contracts.SessionState, event contracts.RitualEvent) contracts
 	state.SchemaVersion = event.SchemaVersion
 	state.Host = event.Host
 	state.SessionID = event.SessionID
-	state.ProjectKey = event.ProjectKey
+
+	// Not every payload carries a cwd, and a session does not stop belonging
+	// to its project because one event arrived without one. Both project
+	// fields are only ever replaced by a real value.
+	if event.ProjectKey != "" {
+		state.ProjectKey = event.ProjectKey
+	}
 	if event.ProjectName != "" {
 		state.ProjectName = event.ProjectName
 	}

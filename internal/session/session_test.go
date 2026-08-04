@@ -223,3 +223,29 @@ func TestStoreEvictsOldSessions(t *testing.T) {
 		t.Fatal("the newest session was evicted")
 	}
 }
+
+// Not every hook payload carries a cwd. An event without one must not erase
+// the project a session already belongs to - a prayer looks its session up by
+// project key, and a blanked key sends it to the wrong session.
+func TestAnEventWithoutACwdKeepsTheProject(t *testing.T) {
+	state := Reduce(contracts.SessionState{}, event("e1", contracts.EventPromptSubmitted, 0))
+	if state.ProjectKey == "" || state.ProjectName == "" {
+		t.Fatalf("the first event carried no project: %+v", state)
+	}
+
+	anonymous := event("e2", contracts.EventToolStarted, time.Second)
+	anonymous.ProjectKey = ""
+	anonymous.ProjectName = ""
+
+	got := Reduce(state, anonymous)
+
+	if got.ProjectKey != state.ProjectKey {
+		t.Fatalf("project key was erased: %q -> %q", state.ProjectKey, got.ProjectKey)
+	}
+	if got.ProjectName != state.ProjectName {
+		t.Fatalf("project name was erased: %q -> %q", state.ProjectName, got.ProjectName)
+	}
+	if got.Phase != contracts.PhaseWorking {
+		t.Fatalf("phase = %q", got.Phase)
+	}
+}
