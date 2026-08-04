@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # A release whose version does not match the manifests would install the
+      # wrong asset, or none, so it is refused before anything is published.
+      - name: Tag matches the manifests
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          version="${TAG#v}"
+
+          read_version() {
+            sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$1" | head -n 1
+          }
+
+          marketplace="$(read_version .claude-plugin/marketplace.json version)"
+          plugin="$(read_version plugins/prayops/.claude-plugin/plugin.json version)"
+          runtime="$(read_version plugins/prayops/runtime-manifest.json runtimeVersion)"
+
+          echo "tag $version, marketplace $marketplace, plugin $plugin, runtime $runtime"
+          for got in "$marketplace" "$plugin" "$runtime"; do
+            if [ "$got" != "$version" ]; then
+              echo "version mismatch: bump every manifest to $version before tagging" >&2
+              exit 1
+            fi
+          done
+
+      - run: go test ./...
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

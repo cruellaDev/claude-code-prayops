@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "prayops",
+  "displayName": "PrayOps Terminal",
+  "version": "0.1.0",
+  "description": "A pixel ritual altar and prayer effects for Claude Code.",
+  "author": {
+    "name": "cruellaDev"
+  },
+  "repository": "https://github.com/cruellaDev/claude-code-prayops",
+  "license": "MIT",
+  "keywords": [
+    "tui",
+    "hooks",
+    "statusline",
+    "pixel-art"
+  ]
+}
