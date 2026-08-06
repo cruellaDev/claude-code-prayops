@@ -1,6 +1,7 @@
 package statusline
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -30,17 +31,19 @@ func praying(at time.Time) contracts.SessionState {
 func TestSceneDrawsTheCenser(t *testing.T) {
 	lines := scene(t, working(time.Minute), now, 60)
 
-	if len(lines) != smokeRow+len(censer)+1 {
+	if len(lines) != smokeRows+emberRow+len(censer)+1 {
 		t.Fatalf("%d rows:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
 
 	joined := strings.Join(lines, "\n")
 	for name, glyphs := range map[string]string{
-		"mouth": "▄▄▄▄▄▄▄",
-		"ash":   "▐▒▒▒▒▒▒▒▌",
-		"belly": "███████",
-		"ears":  "▐▌",
-		"feet":  "▘  ▘  ▘",
+		"mouth":   "▗▄▄▄▄▄▖",
+		"belly":   "███████",
+		"handles": "▗▄▟",
+		"stand":   "▝▀▀▀▀▀▘",
+		"feet":    "▝  ▀  ▘",
+		"incense": "▮ ▮ ▮",
+		"ember":   "▪ ▪ ▪",
 	} {
 		if !strings.Contains(joined, glyphs) {
 			t.Fatalf("no %s in the scene:\n%s", name, joined)
@@ -136,7 +139,7 @@ func TestPrayersMayLandOnTheCenser(t *testing.T) {
 		lines := scene(t, praying(now), now.Add(time.Duration(second)*time.Second), 60)
 
 		for y, row := range lines[:len(lines)-1] {
-			if y < smokeRow {
+			if y < smokeRows {
 				continue
 			}
 			head := []rune(row)
@@ -200,7 +203,7 @@ func TestMotionOffStillsTheScene(t *testing.T) {
 	}
 
 	first := still(now)
-	if len(first) != smokeRow+len(censer)+1 {
+	if len(first) != smokeRows+emberRow+len(censer)+1 {
 		t.Fatalf("motion off changed the scene:\n%s", strings.Join(first, "\n"))
 	}
 	if strings.Join(still(now.Add(3*time.Second)), "\n") != strings.Join(first, "\n") {
@@ -208,14 +211,20 @@ func TestMotionOffStillsTheScene(t *testing.T) {
 	}
 }
 
-// An idle session smokes less than a working one, so the scene reads as
-// activity without being read.
+// An idle session smokes more thinly than a working one, so the scene reads
+// as activity without being read. Counting puffs cannot say so any more - the
+// footprint is fixed on purpose - so the density does.
 func TestSmokeFollowsThePhase(t *testing.T) {
 	puffs := func(phase contracts.SessionPhase) int {
 		state := working(time.Minute)
 		state.Phase = phase
-		rows := scene(t, state, now, 60)[:smokeRow]
-		return strings.Count(strings.Join(rows, ""), "░") + strings.Count(strings.Join(rows, ""), "▒")
+
+		total := 0
+		for second := 0; second < 60; second++ {
+			rows := scene(t, state, now.Add(time.Duration(second)*time.Second), 60)[:smokeRows]
+			total += strings.Count(strings.Join(rows, ""), "▒")
+		}
+		return total
 	}
 
 	if !(puffs(contracts.PhaseWorking) > puffs(contracts.PhaseTurnCompleted)) {
@@ -266,7 +275,7 @@ func TestTheSceneNeverChangesHeight(t *testing.T) {
 		for second := 0; second < 120; second++ {
 			lines := scene(t, state, now.Add(time.Duration(second)*time.Second), 80)
 
-			if len(lines) != smokeRow+len(censer)+1 {
+			if len(lines) != smokeRows+emberRow+len(censer)+1 {
 				t.Fatalf("second %d drew %d rows", second, len(lines))
 			}
 			for y, row := range lines {
@@ -276,5 +285,42 @@ func TestTheSceneNeverChangesHeight(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// The smoke may change density but never position. Two earlier versions moved
+// it - onto random rows, then one column either way - and both made the plume
+// shift every second directly above the line the user types on. That is the
+// complaint this whole redraw started from, and it came back twice.
+func TestSmokeNeverMoves(t *testing.T) {
+	occupied := func(second int) string {
+		lines := scene(t, working(time.Minute), now.Add(time.Duration(second)*time.Second), 80)
+
+		var cells []string
+		for y, row := range lines[:smokeRows] {
+			for x, r := range []rune(row) {
+				if r != ' ' {
+					cells = append(cells, fmt.Sprintf("%d,%d", x, y))
+				}
+			}
+		}
+		return strings.Join(cells, " ")
+	}
+
+	first := occupied(0)
+	shapes := map[string]bool{}
+
+	for second := 0; second < 120; second++ {
+		if got := occupied(second); got != first {
+			t.Fatalf("second %d put smoke at [%s], second 0 at [%s]", second, got, first)
+		}
+		rows := scene(t, working(time.Minute), now.Add(time.Duration(second)*time.Second), 80)
+		shapes[strings.Join(rows[:smokeRows], "")] = true
+	}
+
+	// Fixed in place, but not frozen: the user noticed at once when an earlier
+	// version stopped moving altogether.
+	if len(shapes) < 4 {
+		t.Fatalf("the smoke only ever drew %d different patterns", len(shapes))
 	}
 }
