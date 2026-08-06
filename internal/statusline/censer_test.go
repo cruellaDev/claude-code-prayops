@@ -13,6 +13,12 @@ func scene(t *testing.T, state contracts.SessionState, at time.Time, columns int
 	return Scene(state, SceneOptions{Now: at, Columns: columns, Motion: true})
 }
 
+func idle() contracts.SessionState {
+	state := working(time.Minute)
+	state.Phase = contracts.PhaseIdle
+	return state
+}
+
 func praying(at time.Time) contracts.SessionState {
 	state := working(time.Minute)
 	state.LastPrayerAt = at
@@ -24,18 +30,17 @@ func praying(at time.Time) contracts.SessionState {
 func TestSceneDrawsTheCenser(t *testing.T) {
 	lines := scene(t, working(time.Minute), now, 60)
 
-	if len(lines) < 8 {
-		t.Fatalf("only %d rows:\n%s", len(lines), strings.Join(lines, "\n"))
+	if len(lines) != smokeRow+len(censer)+1 {
+		t.Fatalf("%d rows:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
 
 	joined := strings.Join(lines, "\n")
 	for name, glyphs := range map[string]string{
-		"mouth":   "▄▄▄▄▄▄▄▄▄▄▄▄▄",
-		"ash":     "▒▒▒▒▒",
-		"belly":   "▟███████████████▙",
-		"ears":    "▐▌",
-		"feet":    "█▘",
-		"incense": "▕▏",
+		"mouth": "▄▄▄▄▄▄▄",
+		"ash":   "▐▒▒▒▒▒▒▒▌",
+		"belly": "███████",
+		"ears":  "▐▌",
+		"feet":  "▘  ▘  ▘",
 	} {
 		if !strings.Contains(joined, glyphs) {
 			t.Fatalf("no %s in the scene:\n%s", name, joined)
@@ -123,23 +128,49 @@ func TestPrayersThinOutAndStop(t *testing.T) {
 	}
 }
 
-// A prayer belongs around the censer, not wedged between its legs.
-func TestPrayersStayOffTheCenser(t *testing.T) {
-	for second := 0; second < int(PrayerShows/time.Second); second++ {
+// Offerings pile onto the censer. Reserving its block made the burst look
+// fenced off, which is the opposite of what a burst is.
+func TestPrayersMayLandOnTheCenser(t *testing.T) {
+	landed := false
+	for second := 0; second < int(PrayerShows/time.Second) && !landed; second++ {
 		lines := scene(t, praying(now), now.Add(time.Duration(second)*time.Second), 60)
 
 		for y, row := range lines[:len(lines)-1] {
-			if y < smokeRows {
-				continue // above the censer, prayers are welcome
+			if y < smokeRow {
+				continue
 			}
 			head := []rune(row)
 			if len(head) > CenserWidth {
 				head = head[:CenserWidth]
 			}
 			if strings.Contains(string(head), Prayer) {
-				t.Fatalf("second %d: a prayer landed on the censer: %q", second, row)
+				landed = true
+				break
 			}
 		}
+	}
+	if !landed {
+		t.Fatal("no prayer ever reached the censer")
+	}
+}
+
+// The burst travels. If every refresh drew a fresh random spread instead, the
+// emoji would rearrange without ever going anywhere.
+func TestPrayersTravelOutward(t *testing.T) {
+	spread := func(second int) int {
+		lines := scene(t, praying(now), now.Add(time.Duration(second)*time.Second), 120)
+
+		widest := 0
+		for _, row := range lines[:len(lines)-1] {
+			if i := strings.LastIndex(row, Prayer); i > widest {
+				widest = i
+			}
+		}
+		return widest
+	}
+
+	if !(spread(2) > spread(0)) {
+		t.Fatalf("the burst did not travel: %d cells then %d", spread(0), spread(2))
 	}
 }
 
@@ -169,8 +200,8 @@ func TestMotionOffStillsTheScene(t *testing.T) {
 	}
 
 	first := still(now)
-	if len(first) < 8 {
-		t.Fatalf("motion off removed the censer:\n%s", strings.Join(first, "\n"))
+	if len(first) != smokeRow+len(censer)+1 {
+		t.Fatalf("motion off changed the scene:\n%s", strings.Join(first, "\n"))
 	}
 	if strings.Join(still(now.Add(3*time.Second)), "\n") != strings.Join(first, "\n") {
 		t.Fatal("the scene still moves with motion off")
@@ -183,12 +214,67 @@ func TestSmokeFollowsThePhase(t *testing.T) {
 	puffs := func(phase contracts.SessionPhase) int {
 		state := working(time.Minute)
 		state.Phase = phase
-		rows := scene(t, state, now, 60)[:smokeRows]
+		rows := scene(t, state, now, 60)[:smokeRow]
 		return strings.Count(strings.Join(rows, ""), "░") + strings.Count(strings.Join(rows, ""), "▒")
 	}
 
 	if !(puffs(contracts.PhaseWorking) > puffs(contracts.PhaseTurnCompleted)) {
 		t.Fatalf("working smokes %d, done smokes %d",
 			puffs(contracts.PhaseWorking), puffs(contracts.PhaseTurnCompleted))
+	}
+}
+
+// Every row of the censer sits on the same axis. They used to be centred one
+// cell apart from each other, which read as a wobble rather than a shape.
+func TestTheCenserRowsShareOneAxis(t *testing.T) {
+	var axis float64
+	for i, row := range censer {
+		runes := []rune(row)
+
+		first, last := -1, -1
+		for x, r := range runes {
+			if r != ' ' {
+				if first < 0 {
+					first = x
+				}
+				last = x
+			}
+		}
+		if first < 0 {
+			t.Fatalf("censer row %d is blank", i)
+		}
+		if width(row) != CenserWidth {
+			t.Fatalf("censer row %d is %d cells, want %d: %q", i, width(row), CenserWidth, row)
+		}
+
+		centre := float64(first+last) / 2
+		if i == 0 {
+			axis = centre
+		} else if centre != axis {
+			t.Fatalf("censer row %d is centred on %.1f, the first on %.1f", i, centre, axis)
+		}
+	}
+}
+
+// The scene must be exactly as tall every second. Smoke used to land on random
+// rows, so whenever the top one stayed empty it collapsed - the scene was 9,
+// 10, or 11 rows depending on the second, and the prompt under it moved.
+func TestTheSceneNeverChangesHeight(t *testing.T) {
+	for _, state := range []contracts.SessionState{
+		working(time.Minute), praying(now), idle(),
+	} {
+		for second := 0; second < 120; second++ {
+			lines := scene(t, state, now.Add(time.Duration(second)*time.Second), 80)
+
+			if len(lines) != smokeRow+len(censer)+1 {
+				t.Fatalf("second %d drew %d rows", second, len(lines))
+			}
+			for y, row := range lines {
+				if row == "" {
+					t.Fatalf("second %d left row %d blank, which collapses the scene:\n%s",
+						second, y, strings.Join(lines, "\n"))
+				}
+			}
+		}
 	}
 }
