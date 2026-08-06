@@ -225,7 +225,7 @@ func TestStatuslineFallsBackWhenNarrow(t *testing.T) {
 	data := t.TempDir()
 	t.Setenv("CLAUDE_PLUGIN_DATA", data)
 	t.Setenv("NO_COLOR", "1")
-	t.Setenv("COLUMNS", "18")
+	t.Setenv("COLUMNS", "12")
 
 	if code, _, _ := exec(t, `{"session_id":"s1","hook_event_name":"PreToolUse"}`, "hook", "claude"); code != 0 {
 		t.Fatal("hook failed")

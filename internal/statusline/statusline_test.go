@@ -23,7 +23,7 @@ func TestFullLine(t *testing.T) {
 	// 10 minutes of incense, 3.6 minutes elapsed, so 64% is left.
 	got := Render(working(216*time.Second), Options{Now: now, Columns: 80})
 
-	if got != "祈 PrayOps · WORKING · 香 64%" {
+	if got != "PrayOps · WORKING · 64%" {
 		t.Fatalf("line = %q", got)
 	}
 }
@@ -31,7 +31,7 @@ func TestFullLine(t *testing.T) {
 func TestCompactLineOnANarrowTerminal(t *testing.T) {
 	got := Render(working(216*time.Second), Options{Now: now, Columns: 20})
 
-	if got != "祈 WORKING 64%" {
+	if got != "WORKING 64%" {
 		t.Fatalf("line = %q", got)
 	}
 }
@@ -105,7 +105,7 @@ func TestIncenseIsOmittedWhenNoTurnIsRunning(t *testing.T) {
 		state.Phase = phase
 
 		got := Render(state, Options{Now: now, Columns: 80})
-		if strings.Contains(got, incense) || strings.Contains(got, "%") {
+		if strings.Contains(got, "%") {
 			t.Fatalf("phase %q showed incense: %q", phase, got)
 		}
 	}
@@ -175,7 +175,7 @@ func TestColorIsOptional(t *testing.T) {
 
 func TestUnknownWidthUsesADefault(t *testing.T) {
 	got := Render(working(216*time.Second), Options{Now: now})
-	if got != "祈 PrayOps · WORKING · 香 64%" {
+	if got != "PrayOps · WORKING · 64%" {
 		t.Fatalf("line = %q", got)
 	}
 }

@@ -11,25 +11,31 @@ import (
 // The censer is drawn in block characters rather than box-drawing ones. Box
 // drawing reads as a thin diagram; this is meant to look like pixels.
 //
-// The shape is a three-legged censer: a flared mouth with ash showing, a belly
-// wider than the mouth, ears on both sides, and three feet.
+// It is a three-legged censer: a mouth with ash showing, a belly wider than
+// the mouth, ears on both sides, three feet. Every row is centred on the same
+// column - an earlier version had each row on its own axis, which read as a
+// wobble rather than a shape.
 var censer = []string{
-	"   ▄▄▄▄▄▄▄▄▄▄▄▄▄",
-	"  ▐▒▒▒▒▒▒▒▒▒▒▒▒▒▌",
-	"▐▌▟███████████████▙▐▌",
-	"  ▜█████████████▛",
-	"   ▝▀▀▀▀▀▀▀▀▀▀▀▘",
-	"    █▘   █    ▝█",
+	"  ▄▄▄▄▄▄▄  ",
+	" ▐▒▒▒▒▒▒▒▌ ",
+	"▐▌███████▐▌",
+	" ▝▀▀▀▀▀▀▀▘ ",
+	"  ▘  ▘  ▘  ",
 }
 
-// incenseRow sits on the censer's mouth; smoke rises above it.
-const (
-	incenseRow = "     ▕▏ ▕▏ ▕▏"
-	smokeRows  = 3
-)
+// CenserWidth is the width of every row of the censer, in cells.
+const CenserWidth = 11
 
-// CenserWidth is the widest row of the scene, in cells.
-const CenserWidth = 21
+// smokeRow is the single row of smoke above the censer.
+//
+// There used to be three, with puffs landing on random rows. Whenever nothing
+// landed on the top row it collapsed away, so the scene was 9, 10, or 11 rows
+// depending on the second - and the prompt below it moved. One row, always
+// drawn, cannot do that.
+const smokeRow = 1
+
+// smokeColumns are where smoke can rise, over the mouth of the censer.
+var smokeColumns = []int{2, 5, 8}
 
 // Prayer is the emoji a prayer appears as.
 const Prayer = "🙏"
@@ -40,10 +46,7 @@ const PrayerShows = 5 * time.Second
 
 // MaxPrayers is how many emoji can be on screen at once. A prayer should feel
 // like a lot of them, not a polite few.
-const MaxPrayers = 22
-
-// smokeGlyphs thin out as smoke rises.
-var smokeGlyphs = []rune{'░', '▒', '░', '·'}
+const MaxPrayers = 44
 
 // SceneOptions control one rendered scene.
 type SceneOptions struct {
@@ -69,7 +72,7 @@ func Scene(state contracts.SessionState, opts SceneOptions) []string {
 		return nil
 	}
 
-	height := smokeRows + 1 + len(censer)
+	height := smokeRow + len(censer)
 	g := newGrid(columns, height)
 
 	// One frame per second. Anything finer would be invisible: the status line
@@ -80,11 +83,10 @@ func Scene(state contracts.SessionState, opts SceneOptions) []string {
 	}
 
 	drawSmoke(g, frame, burning(phaseOf(state)))
-	g.text(0, smokeRows, incenseRow)
 	for i, row := range censer {
-		g.text(0, smokeRows+1+i, row)
+		g.text(0, smokeRow+i, row)
 	}
-	drawPrayers(g, state, opts.Now, frame)
+	drawPrayers(g, state, opts.Now, columns)
 
 	lines := g.lines()
 	return append(lines, Render(state, Options{
@@ -92,34 +94,46 @@ func Scene(state contracts.SessionState, opts SceneOptions) []string {
 	}))
 }
 
-// drawSmoke lifts a few puffs above each stick. Positions come from a hash of
-// the frame, so the smoke drifts without any state being carried between
-// refreshes.
+// drawSmoke puts a puff over each vent, on the columns the feet stand on.
+//
+// The puffs never move sideways. They used to drift by a hashed offset, which
+// made the smoke wander off the censer's axis every second - movement in the
+// corner of the eye, on a line the user is trying to type under. Only the
+// density changes now, so the shape holds still and the scene still breathes.
 func drawSmoke(g *grid, frame uint64, active bool) {
-	puffs := 3
-	if active {
-		puffs = 6
+	if !active {
+		// A resting censer still smokes, or the row would collapse and take a
+		// line of height with it.
+		g.set(smokeColumns[len(smokeColumns)/2], 0, '░')
+		return
 	}
 
-	for i := 0; i < puffs; i++ {
-		// Sticks stand at these columns of the incense row.
-		column := []int{5, 8, 11}[i%3]
-		drift := int(effect.Hash01(frame, i, 0, "drift")*5) - 2
-		row := int(effect.Hash01(frame, i, 1, "rise") * float64(smokeRows))
-
-		glyph := smokeGlyphs[min(row, len(smokeGlyphs)-1)]
-		g.set(column+drift, smokeRows-1-row, glyph)
+	for i, column := range smokeColumns {
+		glyph := '░'
+		if effect.Hash01(frame, i, 0, "puff") > 0.5 {
+			glyph = '▒'
+		}
+		g.set(column, 0, glyph)
 	}
 }
 
-// drawPrayers scatters emoji anywhere the censer is not, thinning out as the
-// prayer ages.
-func drawPrayers(g *grid, state contracts.SessionState, now time.Time, frame uint64) {
+// drawPrayers throws the emoji out of the censer and lets them fly.
+//
+// The trick is that the seed is the prayer, not the frame. Each emoji keeps
+// its own direction and speed for the whole five seconds, so it travels
+// outward frame by frame instead of teleporting to a fresh random spot every
+// refresh - a cloud of dots that merely rearranges reads as noise, while the
+// same dots moving away from a point read as a burst.
+//
+// They land anywhere, the censer included. Reserving its block kept the
+// drawing tidy and made the burst look fenced off; offerings piling onto the
+// censer is the point.
+func drawPrayers(g *grid, state contracts.SessionState, now time.Time, columns int) {
 	if state.LastPrayerAt.IsZero() {
 		return
 	}
 	// Whole seconds, not the exact age: Claude Code re-runs the status line on
-	// events as well as on its timer, and a count derived from a fractional
+	// events as well as on its timer, and a position derived from a fractional
 	// age would redraw a different picture twice within the same second.
 	elapsed := now.Unix() - state.LastPrayerAt.Unix()
 	shows := int64(PrayerShows / time.Second)
@@ -127,26 +141,47 @@ func drawPrayers(g *grid, state contracts.SessionState, now time.Time, frame uin
 		return
 	}
 
-	// Start dense and thin out, so the burst reads as a burst.
-	remaining := 1 - float64(elapsed)/float64(shows)
-	count := int(float64(MaxPrayers)*remaining) + 1
+	// One burst, one seed. Two prayers a second apart throw different sprays.
+	seed := uint64(state.LastPrayerAt.Unix())
+	age := float64(elapsed)
+	progress := (age + 1) / float64(shows)
 
-	placed := 0
-	for attempt := 0; attempt < 400 && placed < count; attempt++ {
-		x := int(effect.Hash01(frame, attempt, placed, "x") * float64(g.width))
-		y := int(effect.Hash01(frame, attempt, placed, "y") * float64(len(g.cells)))
+	rows := len(g.cells)
+	taken := make(map[int]bool, MaxPrayers*2)
 
-		// The censer's own block is reserved, not just its filled cells: a
-		// prayer wedged between the legs reads as noise inside the vessel
-		// rather than an offering around it.
-		if x < CenserWidth && y >= smokeRows {
+	for i := 0; i < MaxPrayers; i++ {
+		// Each one burns out at its own moment, so the crowd thins unevenly
+		// instead of all of them stepping back together.
+		if age > 1+effect.Hash01(seed, i, 0, "life")*float64(shows-1) {
 			continue
 		}
-		if !g.free(x, y, prayerCells) {
+
+		// The scene is six rows and most of a terminal across, so the travel
+		// that reads as a burst is sideways. Vertically they only drift up a
+		// row or so; anything more flies out of the top and is simply lost.
+		reach := effect.Hash01(seed, i, 1, "reach") * float64(columns-CenserWidth)
+		if effect.Hash01(seed, i, 2, "side") < 0.35 {
+			reach = -reach / 3 // a few go the other way, past the censer
+		}
+
+		x := int(float64(CenserWidth)/2 + reach*progress)
+		y := int(effect.Hash01(seed, i, 3, "row")*float64(rows) - age/2)
+		if y < 0 {
+			y = 0
+		}
+
+		if x < 0 || y >= rows || x+prayerCells > g.width {
 			continue
 		}
+		// Two emoji in the same place would leave half a glyph behind, so
+		// prayers give way to each other - and to nothing else.
+		if taken[y*g.width+x] || taken[y*g.width+x+1] {
+			continue
+		}
+
 		g.text(x, y, Prayer)
-		placed++
+		taken[y*g.width+x] = true
+		taken[y*g.width+x+1] = true
 	}
 }
 

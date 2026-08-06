@@ -24,11 +24,10 @@ const DefaultColumns = 80
 // compactBelow is the width under which the label and separators are dropped.
 const compactBelow = 34
 
-const (
-	prefix  = "祈"
-	incense = "香"
-	sep     = " · "
-)
+// The label carried 祈 and 香 for no better reason than that a censer is an
+// East Asian object. They are not a requirement, and a reader who does not
+// know the characters gets nothing from them.
+const sep = " · "
 
 // ANSI colours, kept to the four the design calls for.
 const (
@@ -118,18 +117,18 @@ func Render(state contracts.SessionState, opts Options) string {
 }
 
 func full(label, percent string) string {
-	parts := []string{prefix + " PrayOps", label}
+	parts := []string{"PrayOps", label}
 	if percent != "" {
-		parts = append(parts, incense+" "+percent)
+		parts = append(parts, percent)
 	}
 	return strings.Join(parts, sep)
 }
 
 func compact(label, percent string) string {
 	if percent == "" {
-		return prefix + " " + label
+		return label
 	}
-	return prefix + " " + label + " " + percent
+	return label + " " + percent
 }
 
 func colorize(line string, phase contracts.SessionPhase, color bool) string {
