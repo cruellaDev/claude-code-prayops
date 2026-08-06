@@ -24,6 +24,11 @@ type Scope struct {
 	// Projects holds hashed project keys, never paths: the same hash the
 	// events use, so nothing here says where anyone works.
 	Projects []string `json:"projects"`
+
+	// Paused hides the censer everywhere without touching the user's
+	// settings.json. Uninstalling would work too, but it throws away the
+	// setting and whatever it replaced - a switch should be a switch.
+	Paused bool `json:"paused,omitempty"`
 }
 
 // scopePath is where the list lives inside the plugin's data directory.
@@ -46,6 +51,9 @@ func LoadScope(dataDir string) Scope {
 
 // Allows reports whether the status line should draw for a project.
 func (s Scope) Allows(projectDir string) bool {
+	if s.Paused {
+		return false
+	}
 	if len(s.Projects) == 0 {
 		return true
 	}

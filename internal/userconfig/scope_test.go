@@ -102,3 +102,37 @@ func TestACorruptScopeAllowsEveryProject(t *testing.T) {
 		t.Fatal("a corrupt scope hid the status line")
 	}
 }
+
+// A switch that throws away the setting is not a switch. Pausing hides the
+// censer while leaving settings.json - and whatever it replaced - alone.
+func TestPausingHidesEveryProjectAndIsReversible(t *testing.T) {
+	data := t.TempDir()
+
+	scope := LoadScope(data)
+	scope.Paused = true
+	if err := SaveScope(data, scope); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	for _, project := range []string{here, elsewhere} {
+		if LoadScope(data).Allows(project) {
+			t.Fatalf("%s still shows a censer while paused", project)
+		}
+	}
+
+	// A project chosen while paused stays chosen once it resumes.
+	if err := SaveScope(data, LoadScope(data).Add(here)); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	scope = LoadScope(data)
+	scope.Paused = false
+	if err := SaveScope(data, scope); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	if !LoadScope(data).Allows(here) {
+		t.Fatal("resuming did not bring the chosen project back")
+	}
+	if LoadScope(data).Allows(elsewhere) {
+		t.Fatal("resuming widened the scope")
+	}
+}

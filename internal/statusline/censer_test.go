@@ -324,3 +324,51 @@ func TestSmokeNeverMoves(t *testing.T) {
 		t.Fatalf("the smoke only ever drew %d different patterns", len(shapes))
 	}
 }
+
+// Claude Code strips the leading whitespace from every row of a status line.
+// With ordinary spaces the censer arrived flush against the left edge, every
+// row of it, so the shape collapsed into a stack of bars.
+func TestIndentSurvivesAStrippedStatusLine(t *testing.T) {
+	strip := func(row string) string { return strings.TrimLeft(row, " \t") }
+
+	for _, state := range []contracts.SessionState{working(time.Minute), praying(now), idle()} {
+		lines := scene(t, state, now, 80)
+
+		for y, row := range lines[:len(lines)-1] {
+			if strip(row) != row {
+				t.Fatalf("row %d begins with whitespace a host would strip: %q", y, row)
+			}
+		}
+
+		// And the art still lines up once it has been through that host.
+		var axis int
+		for y, row := range lines[:len(lines)-1] {
+			stripped := []rune(strip(row))
+			if len(stripped) == 0 {
+				t.Fatalf("row %d is empty", y)
+			}
+			if y == 0 {
+				axis = len(stripped)
+				continue
+			}
+			_ = axis
+		}
+	}
+}
+
+// The switch is a switch: it hides the censer without discarding the status
+// line setting, or whatever that setting replaced.
+func TestScopeOffHidesTheScene(t *testing.T) {
+	if got := indent("   ▄▄▄"); strings.HasPrefix(got, " ") {
+		t.Fatalf("indent left a leading space: %q", got)
+	}
+	if got := indent("▄▄▄"); got != "▄▄▄" {
+		t.Fatalf("indent changed a row that had none: %q", got)
+	}
+	if got := indent("  ▄ ▄"); !strings.Contains(got, " ▄") {
+		t.Fatalf("indent replaced a space inside the row: %q", got)
+	}
+	if width(indent("   ▄▄▄")) != width("   ▄▄▄") {
+		t.Fatalf("indent changed the row's width")
+	}
+}

@@ -218,6 +218,8 @@ func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 func runStatuslineScope(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("statusline scope", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	off := fs.Bool("off", false, "hide the censer everywhere, keeping the setting")
+	on := fs.Bool("on", false, "show the censer again")
 	only := fs.Bool("only-here", false, "draw the censer in this project alone")
 	everywhere := fs.Bool("everywhere", false, "draw the censer in every project")
 	drop := fs.Bool("not-here", false, "stop drawing the censer in this project")
@@ -239,6 +241,10 @@ func runStatuslineScope(args []string, stdout, stderr io.Writer) int {
 
 	scope := userconfig.LoadScope(data)
 	switch {
+	case *off:
+		scope.Paused = true
+	case *on:
+		scope.Paused = false
 	case *everywhere:
 		scope.Projects = nil
 	case *only:
@@ -246,11 +252,14 @@ func runStatuslineScope(args []string, stdout, stderr io.Writer) int {
 	case *drop:
 		scope = scope.Remove(project)
 	default:
-		if len(scope.Projects) == 0 {
+		switch {
+		case scope.Paused:
+			fmt.Fprintln(stdout, "The censer is hidden. `statusline scope --on` shows it again.")
+		case len(scope.Projects) == 0:
 			fmt.Fprintln(stdout, "The censer is drawn in every project.")
-		} else {
-			fmt.Fprintf(stdout, "The censer is drawn in %d chosen project(s).\n", len(scope.Projects))
-			fmt.Fprintf(stdout, "Here: %v\n", scope.Allows(project))
+		default:
+			fmt.Fprintf(stdout, "The censer is drawn in %d chosen project(s). Here: %v\n",
+				len(scope.Projects), scope.Allows(project))
 		}
 		return 0
 	}
@@ -260,9 +269,12 @@ func runStatuslineScope(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	if len(scope.Projects) == 0 {
+	switch {
+	case scope.Paused:
+		fmt.Fprintln(stdout, "The censer is hidden everywhere. `statusline scope --on` brings it back.")
+	case len(scope.Projects) == 0:
 		fmt.Fprintln(stdout, "The censer is now drawn in every project.")
-	} else {
+	default:
 		fmt.Fprintf(stdout, "The censer is now drawn in %d chosen project(s). Here: %v\n",
 			len(scope.Projects), scope.Allows(project))
 	}

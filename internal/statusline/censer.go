@@ -22,6 +22,7 @@ import (
 // pedestal and the middle foot a quarter cell off axis - ▝ ▀ ▘ mirrors.
 var censer = []string{
 	"     ▮ ▮ ▮     ",
+	"     ▮ ▮ ▮     ",
 	"    ▗▄▄▄▄▄▖    ",
 	" ▗▄▟███████▙▄▖ ",
 	" ▝▀▜███████▛▀▘ ",
@@ -288,9 +289,35 @@ func (g *grid) lines(color bool) []string {
 		}
 		// Trimming has to ignore the escapes, which never end a row anyway:
 		// only spaces do, and TrimRight sees them plainly.
-		out = append(out, strings.TrimRight(b.String(), " "))
+		out = append(out, indent(strings.TrimRight(b.String(), " ")))
 	}
 	return out
+}
+
+// blank is a braille cell with no dots raised. It occupies one column and
+// draws nothing, which is what a space does - except that it is not a space.
+//
+// Claude Code strips the leading whitespace from every row of a status line.
+// With ordinary spaces the censer arrived with each row flush against the
+// left edge, so the shape collapsed into a stack of bars no matter how
+// carefully the art was centred.
+const blank = '\u2800'
+
+// indent replaces a row's leading spaces with blanks that survive the strip.
+// Only the leading run: spaces inside a row are kept as they are, and those
+// are not touched.
+func indent(row string) string {
+	runes := []rune(row)
+
+	for i, r := range runes {
+		if r != ' ' {
+			for j := 0; j < i; j++ {
+				runes[j] = blank
+			}
+			return string(runes)
+		}
+	}
+	return row
 }
 
 // phaseOf resolves an unset phase to idle, the same way Render does.
