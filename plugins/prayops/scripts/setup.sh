@@ -43,23 +43,35 @@ fi
 # sibling does, the sibling is the real one. With no sibling to correct to,
 # the path is taken as given: that is what a manual run with a custom
 # directory looks like, and guessing would be worse than obeying.
+data_parent="$(dirname "$PLUGIN_DATA")"
+in_plugin_layout=0
+if [ "$(basename "$data_parent")" = "data" ] &&
+  [ "$(basename "$(dirname "$data_parent")")" = "plugins" ]; then
+  in_plugin_layout=1
+fi
+
 case "$(basename "$PLUGIN_DATA")" in
   *prayops*) ;;
   *)
-    found=""
-    count=0
-    for candidate in "$(dirname "$PLUGIN_DATA")"/*prayops*; do
-      [ -d "$candidate" ] || continue
-      found="$candidate"
-      count=$((count + 1))
-    done
+    # Only inside Claude Code's own layout. A directory that merely happens to
+    # sit beside something named prayops - a checkout, an unpacked archive -
+    # is not a leak, and redirecting there installs where nobody asked.
+    if [ "$in_plugin_layout" -eq 1 ]; then
+      found=""
+      count=0
+      for candidate in "$data_parent"/*prayops*; do
+        [ -d "$candidate" ] || continue
+        found="$candidate"
+        count=$((count + 1))
+      done
 
-    if [ "$count" -eq 1 ]; then
-      cat >&2 <<EOF
+      if [ "$count" -eq 1 ]; then
+        cat >&2 <<EOF
 PrayOps: CLAUDE_PLUGIN_DATA pointed at $PLUGIN_DATA, which belongs to another
 plugin. Installing into $found instead.
 EOF
-      PLUGIN_DATA="$found"
+        PLUGIN_DATA="$found"
+      fi
     fi
     ;;
 esac

@@ -5,13 +5,13 @@
     "name": "cruellaDev"
   },
   "description": "Pixel ritual tools for Claude Code.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "plugins": [
     {
       "name": "prayops",
       "source": "./plugins/prayops",
       "description": "A pixel ritual altar, lifecycle hooks, and prayer effects for Claude Code.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "category": "developer-tools",
       "tags": [
         "tui",
