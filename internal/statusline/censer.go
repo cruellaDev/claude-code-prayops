@@ -327,3 +327,16 @@ func phaseOf(state contracts.SessionState) contracts.SessionPhase {
 	}
 	return state.Phase
 }
+
+// CenserRows returns the censer's rows, for callers that check the art
+// against what is published rather than redrawing it by hand.
+func CenserRows() []string { return append([]string(nil), censer...) }
+
+// SceneHeight is how many rows the scene draws above the status text. A
+// published copy has to match it exactly: comparing only the last rows lets a
+// dropped row slide the whole comparison along and match anyway.
+func SceneHeight() int { return smokeRows + emberRow + len(censer) }
+
+// Indent is exported for the same reason: a published copy of the art has to
+// carry the same leading blanks the status line emits.
+func Indent(row string) string { return indent(row) }
