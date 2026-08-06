@@ -91,7 +91,7 @@ func runHook(args []string, stdin io.Reader) int {
 		return 0
 	}
 
-	data := os.Getenv("CLAUDE_PLUGIN_DATA")
+	data := pluginDataDir()
 	if data == "" {
 		recordHookError(spool.ErrNoPluginData)
 		return 0
@@ -149,7 +149,7 @@ func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		_ = json.Unmarshal(raw, &in)
 	}
 
-	data := os.Getenv("CLAUDE_PLUGIN_DATA")
+	data := pluginDataDir()
 	if data == "" {
 		// Nothing to report and nowhere to complain to. An empty line beats
 		// repeating an error on every refresh.
@@ -199,7 +199,7 @@ func runStatuslineConfig(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	data := os.Getenv("CLAUDE_PLUGIN_DATA")
+	data := pluginDataDir()
 	if data == "" {
 		fmt.Fprintln(stderr, "prayops: CLAUDE_PLUGIN_DATA is not set")
 		return 1
@@ -311,7 +311,7 @@ func runPray(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	data := os.Getenv("CLAUDE_PLUGIN_DATA")
+	data := pluginDataDir()
 	if data == "" {
 		fmt.Fprintln(stderr, "prayops: CLAUDE_PLUGIN_DATA is not set")
 		return 1
@@ -420,7 +420,7 @@ func runWatch(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	data := os.Getenv("CLAUDE_PLUGIN_DATA")
+	data := pluginDataDir()
 	if data == "" {
 		fmt.Fprintln(stderr, "prayops: CLAUDE_PLUGIN_DATA is not set.")
 		fmt.Fprintln(stderr, "Run /prayops:setup in Claude Code first, then start the watcher from the")
@@ -472,7 +472,7 @@ func runAlias(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	data := os.Getenv("CLAUDE_PLUGIN_DATA")
+	data := pluginDataDir()
 	if data == "" {
 		fmt.Fprintln(stderr, "prayops: CLAUDE_PLUGIN_DATA is not set")
 		return 1
@@ -562,7 +562,7 @@ func terminalColumns() int {
 // recordHookError overwrites a single file, so it is self-bounding and needs
 // no rate limiting. Nothing here is written to stdout or stderr.
 func recordHookError(cause error) {
-	data := os.Getenv("CLAUDE_PLUGIN_DATA")
+	data := pluginDataDir()
 	if data == "" {
 		return
 	}
@@ -629,7 +629,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 
 	report := doctor.Run(doctor.Options{
 		PluginRoot: firstNonEmpty(*pluginRoot, os.Getenv("CLAUDE_PLUGIN_ROOT")),
-		PluginData: firstNonEmpty(*pluginData, os.Getenv("CLAUDE_PLUGIN_DATA")),
+		PluginData: firstNonEmpty(*pluginData, pluginDataDir()),
 		Settings:   userconfig.SettingsPath(),
 	})
 
@@ -656,6 +656,46 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 func isTerminal(f *os.File) bool {
 	info, err := f.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+// pluginDataDir returns the directory this installation keeps its state in.
+//
+// CLAUDE_PLUGIN_DATA is only trustworthy inside a hook, where Claude Code
+// sets it per plugin. The status line is an ordinary settings entry and a
+// shell is an ordinary shell: both inherit whatever the parent process
+// carried, which in a real installation was a different plugin's data
+// directory. Nothing failed - the hooks wrote here, the status line read
+// there, and the censer sat at IDLE forever.
+//
+// The binary is installed at <data>/bin/prayops, so where it is standing is
+// a better answer than what it was told.
+func pluginDataDir() string {
+	if exe, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = resolved
+		}
+		if dir := installedDataDir(exe); dir != "" {
+			return dir
+		}
+	}
+	return os.Getenv("CLAUDE_PLUGIN_DATA")
+}
+
+// installedDataDir returns the data directory a binary belongs to, or "" when
+// it is not standing in an installation - a development build, or a copy
+// dropped into some unrelated bin directory.
+func installedDataDir(exe string) string {
+	dir := filepath.Dir(exe)
+	if filepath.Base(dir) != "bin" {
+		return ""
+	}
+	// The bootstrap writes runtime.json beside bin/. Without it this is
+	// somebody else's bin directory and the environment knows better.
+	data := filepath.Dir(dir)
+	if _, err := os.Stat(filepath.Join(data, "runtime.json")); err != nil {
+		return ""
+	}
+	return data
 }
 
 func firstNonEmpty(values ...string) string {
