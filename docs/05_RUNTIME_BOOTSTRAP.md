@@ -1,3 +1,20 @@
+> **이 문서는 v0.3.0에서 대체되었다 (2026-08-06).**
+>
+> 여기 서술된 GitHub Releases 다운로드 bootstrap은 더 이상 설치 경로가 아니다.
+> v0.3.0부터 runtime binary 4종이 plugin에 함께 배포되고, SessionStart hook이
+> 알맞은 것을 `${CLAUDE_PLUGIN_DATA}/bin`으로 복사한다. 네트워크를 쓰지 않는다.
+>
+> 현재 규칙은 `docs/10_DECISIONS.md`의 D-060..D-063과
+> `docs/02_REQUIREMENTS.md`의 FR-020 개정본을 보라. 구현은
+> `plugins/prayops/scripts/ensure-runtime.sh`와 `scripts/build-plugin-runtime.sh`다.
+>
+> `plugins/prayops/scripts/setup.sh`는 이 문서대로 여전히 동작하지만, 어떤 skill도
+> 그것을 호출하지 않는다. 지원되지 않는 플랫폼을 위한 수동 대체 경로로만 남아 있다.
+>
+> 아래는 v0.2.x까지의 원문이다.
+
+---
+
 # Runtime Bootstrap 명세
 
 ## 1. 목표

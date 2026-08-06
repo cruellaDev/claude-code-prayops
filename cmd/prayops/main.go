@@ -121,9 +121,27 @@ func runHook(args []string, stdin io.Reader) int {
 }
 
 // statuslineInput is the allowlisted view of the status line payload. Claude
-// Code sends model, workspace, and cost details that PrayOps has no use for.
+// Code sends model, cost, and rate limit details that PrayOps has no use for.
+//
+// The working directory is read because scoping cannot be done in settings:
+// `statusLine` is taken from user settings only, and a copy in a project's
+// own settings file is ignored without a word, so scoping there hides the
+// status line everywhere instead of restricting it. The decision belongs
+// here, where the project is already known.
 type statuslineInput struct {
 	SessionID string `json:"session_id"`
+	CWD       string `json:"cwd"`
+	Workspace struct {
+		ProjectDir string `json:"project_dir"`
+	} `json:"workspace"`
+}
+
+// project returns the directory the status line was invoked for.
+func (in statuslineInput) project() string {
+	if in.Workspace.ProjectDir != "" {
+		return in.Workspace.ProjectDir
+	}
+	return in.CWD
 }
 
 // runStatusline prints one compact line describing the caller's own session.
@@ -135,6 +153,8 @@ func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		switch args[0] {
 		case "install", "uninstall", "status":
 			return runStatuslineConfig(args, stdout, stderr)
+		case "scope":
+			return runStatuslineScope(args[1:], stdout, stderr)
 		}
 	}
 
@@ -153,6 +173,12 @@ func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	if data == "" {
 		// Nothing to report and nowhere to complain to. An empty line beats
 		// repeating an error on every refresh.
+		return 0
+	}
+
+	// Silence rather than an error: this is the user having chosen which
+	// projects show a censer, not a failure.
+	if !userconfig.LoadScope(data).Allows(in.project()) {
 		return 0
 	}
 
@@ -182,6 +208,64 @@ func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	fmt.Fprintln(stdout, statusline.Render(state, statusline.Options{
 		Now: opts.Now, Columns: opts.Columns, Color: opts.Color,
 	}))
+	return 0
+}
+
+// runStatuslineScope reports or changes which projects draw a censer.
+//
+// The status line setting itself has to live at user scope - Claude Code
+// ignores it anywhere else - so "only this project" is decided here instead.
+func runStatuslineScope(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("statusline scope", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	only := fs.Bool("only-here", false, "draw the censer in this project alone")
+	everywhere := fs.Bool("everywhere", false, "draw the censer in every project")
+	drop := fs.Bool("not-here", false, "stop drawing the censer in this project")
+	cwd := fs.String("cwd", "", "the project to change, defaulting to the working directory")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	data := pluginDataDir()
+	if data == "" {
+		fmt.Fprintln(stderr, "prayops: CLAUDE_PLUGIN_DATA is not set")
+		return 1
+	}
+
+	project := *cwd
+	if project == "" {
+		project, _ = os.Getwd()
+	}
+
+	scope := userconfig.LoadScope(data)
+	switch {
+	case *everywhere:
+		scope.Projects = nil
+	case *only:
+		scope = scope.Add(project)
+	case *drop:
+		scope = scope.Remove(project)
+	default:
+		if len(scope.Projects) == 0 {
+			fmt.Fprintln(stdout, "The censer is drawn in every project.")
+		} else {
+			fmt.Fprintf(stdout, "The censer is drawn in %d chosen project(s).\n", len(scope.Projects))
+			fmt.Fprintf(stdout, "Here: %v\n", scope.Allows(project))
+		}
+		return 0
+	}
+
+	if err := userconfig.SaveScope(data, scope); err != nil {
+		fmt.Fprintf(stderr, "prayops: %v\n", err)
+		return 1
+	}
+
+	if len(scope.Projects) == 0 {
+		fmt.Fprintln(stdout, "The censer is now drawn in every project.")
+	} else {
+		fmt.Fprintf(stdout, "The censer is now drawn in %d chosen project(s). Here: %v\n",
+			len(scope.Projects), scope.Allows(project))
+	}
 	return 0
 }
 

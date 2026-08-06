@@ -34,24 +34,27 @@ Claude Code 상태줄에 향로가 놓입니다. 일하는 동안 향이 타고 
 /reload-plugins
 ```
 
-그다음 한 번:
+끝입니다. 런타임은 플러그인 안에 들어 있고, 다음 세션이 시작될 때 SessionStart 훅이
+이 플랫폼용 바이너리를 제자리에 복사합니다. 다운로드도, 승인도 없습니다.
+**업데이트도 `/plugin update prayops@prayops` 하나로 끝납니다.**
+
+상태줄에 향로를 띄우려면 한 번만:
 
 ```text
 /prayops:setup
 ```
 
-플러그인 설치만으로는 아무것도 다운로드하지 않습니다. `/prayops:setup`이 **먼저 설치 계획을 보여주고**, 동의한 뒤에야 GitHub Releases에서 이 플랫폼용 바이너리 하나를 받아 SHA-256을 검증하고 설치합니다.
+상태줄은 사용자 `settings.json`에만 쓸 수 있습니다 — Claude Code는 `statusLine`을
+거기서만 읽고, 프로젝트의 `.claude/settings.json`에 넣은 것은 아무 말 없이 무시합니다.
+그래서 "이 프로젝트에서만"은 설정이 아니라 런타임이 판단합니다:
 
 ```text
-PrayOps runtime
-
-  Action    Installing v0.1.0
-  Platform  darwin/arm64
-  Source    https://github.com/cruellaDev/claude-code-prayops/releases/download/v0.1.0
-  Asset     prayops_0.1.0_darwin_arm64.tar.gz
-  Verify    SHA-256 against checksums.txt
-  Install   ~/.claude/plugins/data/prayops-prayops/bin/prayops
+prayops statusline scope --only-here     이 프로젝트만
+prayops statusline scope --everywhere    모든 프로젝트 (기본값)
+prayops statusline scope --not-here      이 프로젝트만 제외
 ```
+
+상태줄 없이도 `/prayops:pray`는 대화창에 향로를 그립니다.
 
 ## 사용
 
@@ -116,7 +119,7 @@ Terminal     OK    truecolor
 
 이 약속은 문서가 아니라 테스트로 지킵니다. `internal/privacy`가 실제 바이너리에 위 항목이 전부 담긴 hook payload를 흘려보낸 뒤, 플러그인 data 디렉터리에 남은 **모든 바이트**를 읽어 검사합니다.
 
-네트워크는 런타임 설치·업데이트 때 GitHub Releases에만 사용합니다. 설치된 바이너리에는 HTTP 클라이언트가 링크조차 되어 있지 않으며, 이것도 테스트가 검사합니다. 텔레메트리는 없습니다.
+네트워크를 전혀 쓰지 않습니다. 런타임은 플러그인과 함께 배포되고 설치는 복사입니다. 설치된 바이너리에는 HTTP 클라이언트가 링크조차 되어 있지 않으며, 이것도 테스트가 검사합니다. 텔레메트리는 없습니다.
 
 ## 지원 플랫폼
 
@@ -131,11 +134,11 @@ Terminal     OK    truecolor
 
 | 증상 | 확인 |
 |---|---|
-| 상태줄이 안 보임 | `/prayops:setup`에서 상태줄 설치에 동의했는지. `prayops statusline status`로 확인 |
+| 상태줄이 안 보임 | `prayops statusline status`로 설치 여부를, `prayops statusline scope`로 이 프로젝트가 범위에 있는지 확인 |
 | 상태줄이 `IDLE`에서 안 바뀜 | `/prayops:doctor`의 `Hooks` 줄. 이벤트가 기록되지 않으면 원인이 표시됩니다 |
 | `prayops watch`가 TTY 오류 | 파이프나 Claude Code Bash 도구가 아닌 실제 터미널에서 실행해야 합니다 |
 | 설치가 checksum 불일치로 실패 | 아무것도 설치되지 않았고 기존 런타임도 그대로입니다. 재시도하거나 릴리즈 페이지를 확인하세요 |
-| 플러그인 업데이트 후 버전 불일치 | `/prayops:setup`을 다시 실행하면 런타임을 갱신합니다 |
+| 플러그인 업데이트 후 버전 불일치 | 새 세션을 시작하면 SessionStart 훅이 런타임을 갱신합니다 |
 | 제단 테두리가 깨져 보임 | ambiguous width 문자를 2칸으로 렌더하는 터미널 설정일 수 있습니다 |
 | 애니메이션을 원하지 않음 | `prayops watch --motion off` 또는 `NO_COLOR=1` |
 
@@ -151,7 +154,8 @@ claude-code-prayops/
 │  ├─ skills/                        setup · pray · watch · doctor
 │  ├─ hooks/hooks.json               lifecycle 9종, runtime 없으면 no-op
 │  ├─ bin/prayops                    launcher
-│  ├─ scripts/setup.sh               bootstrap
+│  ├─ runtime/<os>_<arch>/prayops    함께 배포되는 런타임
+│  ├─ scripts/ensure-runtime.sh      런타임을 제자리로 복사
 │  └─ runtime-manifest.json
 ├─ cmd/prayops/                      Go runtime
 ├─ contracts/                        event · session · layout · raster

@@ -546,3 +546,118 @@ func TestSkillsOnlyUseVariablesTheBashToolHas(t *testing.T) {
 		}
 	}
 }
+
+// dataLayout builds Claude Code's own <root>/plugins/data/<market>-<plugin>
+// arrangement: ours, and one belonging to somebody else.
+func dataLayout(t *testing.T) (ours, theirs string) {
+	t.Helper()
+
+	base := filepath.Join(t.TempDir(), "plugins", "data")
+	ours = filepath.Join(base, "prayops-prayops")
+	theirs = filepath.Join(base, "codex-openai-codex")
+	for _, dir := range []string{ours, theirs} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	return ours, theirs
+}
+
+func absPluginRoot(t *testing.T) string {
+	t.Helper()
+
+	root, err := filepath.Abs(pluginPath)
+	if err != nil {
+		t.Fatalf("resolve plugin root: %v", err)
+	}
+	return root
+}
+
+// A skill's command runs in the Bash tool, where CLAUDE_PLUGIN_DATA is
+// another plugin's directory. Installing there does not just miss - it writes
+// a runtime.json that makes the wrong directory look like a real install from
+// then on, and both the launcher and the Go side believe it.
+func TestEnsureRuntimeRefusesAnotherPluginsDirectory(t *testing.T) {
+	ours, theirs := dataLayout(t)
+	root := absPluginRoot(t)
+
+	cmd := exec.Command(filepath.Join(root, "scripts", "ensure-runtime.sh"))
+	cmd.Env = append(os.Environ(),
+		"CLAUDE_PLUGIN_ROOT="+root, "CLAUDE_PLUGIN_DATA="+theirs)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("ensure-runtime: %v\n%s", err, out)
+	}
+
+	for _, name := range []string{"bin/prayops", "runtime.json"} {
+		if _, err := os.Stat(filepath.Join(theirs, name)); err == nil {
+			t.Fatalf("wrote %s into another plugin's directory", name)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(ours, "bin", "prayops")); err != nil {
+		t.Fatalf("did not install into our own directory: %v", err)
+	}
+}
+
+// The very first session has not copied anything yet, so the launcher runs
+// the binary shipped inside the plugin - which sits at runtime/<os>_<arch>
+// and cannot work out the data directory from its own location. If the
+// launcher forwards the inherited value, that binary writes a whole session's
+// state into whichever plugin the environment happened to name.
+func TestLauncherNeverPassesOnAnotherPluginsDirectory(t *testing.T) {
+	ours, theirs := dataLayout(t)
+	root := absPluginRoot(t)
+
+	cmd := exec.Command(filepath.Join(root, "bin", "prayops"), "pray", "--cwd", "/x")
+	cmd.Env = append(os.Environ(), "CLAUDE_PLUGIN_DATA="+theirs)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("pray: %v\n%s", err, out)
+	}
+
+	if entries, err := os.ReadDir(theirs); err != nil || len(entries) != 0 {
+		t.Fatalf("another plugin's directory holds %d entries", len(entries))
+	}
+	if _, err := os.Stat(filepath.Join(ours, "state")); err != nil {
+		t.Fatalf("the prayer did not land in our own directory: %v", err)
+	}
+}
+
+// The headline of this release is that an update needs nothing but
+// `/plugin update`. That only holds if a stale runtime is actually replaced.
+func TestEnsureRuntimeReplacesAStaleRuntime(t *testing.T) {
+	ours, _ := dataLayout(t)
+	root := absPluginRoot(t)
+
+	run := func() {
+		t.Helper()
+		cmd := exec.Command(filepath.Join(root, "scripts", "ensure-runtime.sh"))
+		cmd.Env = append(os.Environ(),
+			"CLAUDE_PLUGIN_ROOT="+root, "CLAUDE_PLUGIN_DATA="+ours)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("ensure-runtime: %v\n%s", err, out)
+		}
+	}
+
+	run()
+
+	// What an older release left behind: a runtime.json naming a version that
+	// is no longer what the plugin ships.
+	record := filepath.Join(ours, "runtime.json")
+	if err := os.WriteFile(record, []byte(`{"runtimeVersion":"0.0.1"}`), 0o644); err != nil {
+		t.Fatalf("write record: %v", err)
+	}
+	installed := filepath.Join(ours, "bin", "prayops")
+	if err := os.WriteFile(installed, []byte("#!/bin/sh\nexit 9\n"), 0o755); err != nil {
+		t.Fatalf("write stale binary: %v", err)
+	}
+
+	run()
+
+	out, err := exec.Command(installed, "version").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), manifestRuntimeVersion(t)) {
+		t.Fatalf("the stale runtime was not replaced: %q (%v)", out, err)
+	}
+	raw, err := os.ReadFile(record)
+	if err != nil || !strings.Contains(string(raw), manifestRuntimeVersion(t)) {
+		t.Fatalf("runtime.json still reads %q", raw)
+	}
+}
