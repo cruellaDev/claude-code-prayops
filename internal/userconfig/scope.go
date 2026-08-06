@@ -25,6 +25,15 @@ type Scope struct {
 	// events use, so nothing here says where anyone works.
 	Projects []string `json:"projects"`
 
+	// Sessions narrows further, to particular windows. Two windows open on
+	// the same project cannot be told apart by Projects, so this is the only
+	// way to say "this one, not the other".
+	//
+	// A session id dies with its window. If a dead one were left here the
+	// censer would be hidden everywhere with nothing to explain it - the
+	// exact failure this scoping replaced - so the SessionEnd hook drops it.
+	Sessions []string `json:"sessions,omitempty"`
+
 	// Paused hides the censer everywhere without touching the user's
 	// settings.json. Uninstalling would work too, but it throws away the
 	// setting and whatever it replaced - a switch should be a switch.
@@ -49,16 +58,23 @@ func LoadScope(dataDir string) Scope {
 	return scope
 }
 
-// Allows reports whether the status line should draw for a project.
-func (s Scope) Allows(projectDir string) bool {
+// Allows reports whether the status line should draw here and now.
+//
+// Every rule has to agree. An empty list means "no opinion", so a fresh
+// install draws everywhere and each narrowing only ever removes.
+func (s Scope) Allows(projectDir, sessionID string) bool {
 	if s.Paused {
 		return false
 	}
-	if len(s.Projects) == 0 {
+	return listAllows(s.Projects, hook.ProjectKey(projectDir)) &&
+		listAllows(s.Sessions, sessionID)
+}
+
+func listAllows(list []string, key string) bool {
+	if len(list) == 0 {
 		return true
 	}
-	key := hook.ProjectKey(projectDir)
-	for _, allowed := range s.Projects {
+	for _, allowed := range list {
 		if allowed == key {
 			return true
 		}
@@ -68,30 +84,51 @@ func (s Scope) Allows(projectDir string) bool {
 
 // Add restricts the status line to projectDir, plus anything already listed.
 func (s Scope) Add(projectDir string) Scope {
-	key := hook.ProjectKey(projectDir)
-	for _, allowed := range s.Projects {
+	s.Projects = add(s.Projects, hook.ProjectKey(projectDir))
+	return s
+}
+
+// AddSession restricts the status line to one window.
+func (s Scope) AddSession(sessionID string) Scope {
+	if sessionID != "" {
+		s.Sessions = add(s.Sessions, sessionID)
+	}
+	return s
+}
+
+// RemoveSession drops a window. The SessionEnd hook calls this so a closed
+// window cannot go on narrowing the scope from beyond the grave.
+func (s Scope) RemoveSession(sessionID string) Scope {
+	s.Sessions = remove(s.Sessions, sessionID)
+	return s
+}
+
+func add(list []string, key string) []string {
+	for _, allowed := range list {
 		if allowed == key {
-			return s
+			return list
 		}
 	}
-	s.Projects = append(s.Projects, key)
-	sort.Strings(s.Projects)
-	return s
+	list = append(list, key)
+	sort.Strings(list)
+	return list
+}
+
+func remove(list []string, key string) []string {
+	kept := list[:0]
+	for _, allowed := range list {
+		if allowed != key {
+			kept = append(kept, allowed)
+		}
+	}
+	return kept
 }
 
 // Remove drops projectDir. Removing the last one restores every project
 // rather than leaving a list that matches nothing - a scope that hides the
 // status line everywhere is indistinguishable from the bug this replaced.
 func (s Scope) Remove(projectDir string) Scope {
-	key := hook.ProjectKey(projectDir)
-
-	kept := s.Projects[:0]
-	for _, allowed := range s.Projects {
-		if allowed != key {
-			kept = append(kept, allowed)
-		}
-	}
-	s.Projects = kept
+	s.Projects = remove(s.Projects, hook.ProjectKey(projectDir))
 	return s
 }
 

@@ -35,6 +35,14 @@ censer is shown.
      Run it again in any other project to add that one too.
    - **not this project**:
      `"${CLAUDE_PLUGIN_ROOT}/bin/prayops" statusline scope --not-here`
+   - **this window only** - narrower than a project, since two windows can be
+     open on the same one. It lasts until the window closes; the SessionEnd
+     hook drops it, so a closed window never goes on hiding the censer:
+     `"${CLAUDE_PLUGIN_ROOT}/bin/prayops" statusline scope --only-session`
+   - **off for now**, keeping the setting and the choices above:
+     `"${CLAUDE_PLUGIN_ROOT}/bin/prayops" statusline scope --off`
+     and `--on` to bring it back. This is not `uninstall`, which removes the
+     setting from settings.json and restores whatever it replaced.
    `... statusline scope` with no flag reports the current setting. Removing
    the last chosen project restores every project rather than hiding it
    everywhere.

@@ -112,6 +112,18 @@ func runHook(args []string, stdin io.Reader) int {
 		failed = true
 	}
 
+	// A window that narrowed the scope to itself must not go on narrowing it
+	// after it closes: the censer would be hidden everywhere with nothing to
+	// say why, which is the failure the scoping was built to replace.
+	if event.Type == contracts.EventSessionEnded && event.SessionID != "" {
+		if scope := userconfig.LoadScope(data); len(scope.Sessions) > 0 {
+			if err := userconfig.SaveScope(data, scope.RemoveSession(event.SessionID)); err != nil {
+				recordHookError(err)
+				failed = true
+			}
+		}
+	}
+
 	if !failed {
 		// Doctor reads the recorded failure, so leaving one behind would keep
 		// reporting an installation as unhealthy long after it recovered.
@@ -178,7 +190,7 @@ func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 
 	// Silence rather than an error: this is the user having chosen which
 	// projects show a censer, not a failure.
-	if !userconfig.LoadScope(data).Allows(in.project()) {
+	if !userconfig.LoadScope(data).Allows(in.project(), in.SessionID) {
 		return 0
 	}
 
@@ -221,6 +233,7 @@ func runStatuslineScope(args []string, stdout, stderr io.Writer) int {
 	off := fs.Bool("off", false, "hide the censer everywhere, keeping the setting")
 	on := fs.Bool("on", false, "show the censer again")
 	only := fs.Bool("only-here", false, "draw the censer in this project alone")
+	onlySession := fs.Bool("only-session", false, "draw the censer in this window alone, until it closes")
 	everywhere := fs.Bool("everywhere", false, "draw the censer in every project")
 	drop := fs.Bool("not-here", false, "stop drawing the censer in this project")
 	cwd := fs.String("cwd", "", "the project to change, defaulting to the working directory")
@@ -247,20 +260,20 @@ func runStatuslineScope(args []string, stdout, stderr io.Writer) int {
 		scope.Paused = false
 	case *everywhere:
 		scope.Projects = nil
+		scope.Sessions = nil
+	case *onlySession:
+		session := os.Getenv("CLAUDE_CODE_SESSION_ID")
+		if session == "" {
+			fmt.Fprintln(stderr, "prayops: CLAUDE_CODE_SESSION_ID is not set, so this window cannot be named")
+			return 1
+		}
+		scope = scope.AddSession(session)
 	case *only:
 		scope = scope.Add(project)
 	case *drop:
 		scope = scope.Remove(project)
 	default:
-		switch {
-		case scope.Paused:
-			fmt.Fprintln(stdout, "The censer is hidden. `statusline scope --on` shows it again.")
-		case len(scope.Projects) == 0:
-			fmt.Fprintln(stdout, "The censer is drawn in every project.")
-		default:
-			fmt.Fprintf(stdout, "The censer is drawn in %d chosen project(s). Here: %v\n",
-				len(scope.Projects), scope.Allows(project))
-		}
+		fmt.Fprintln(stdout, describeScope(scope, project))
 		return 0
 	}
 
@@ -269,16 +282,34 @@ func runStatuslineScope(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	switch {
-	case scope.Paused:
-		fmt.Fprintln(stdout, "The censer is hidden everywhere. `statusline scope --on` brings it back.")
-	case len(scope.Projects) == 0:
-		fmt.Fprintln(stdout, "The censer is now drawn in every project.")
-	default:
-		fmt.Fprintf(stdout, "The censer is now drawn in %d chosen project(s). Here: %v\n",
-			len(scope.Projects), scope.Allows(project))
-	}
+	fmt.Fprintln(stdout, describeScope(scope, project))
 	return 0
+}
+
+// describeScope says what the scope is now, naming every rule in force.
+//
+// An earlier version reported "every project" whenever no project had been
+// chosen, which was a lie the moment a window had been: the narrowing was
+// real and the message said there was none.
+func describeScope(scope userconfig.Scope, project string) string {
+	if scope.Paused {
+		return "The censer is hidden. `statusline scope --on` shows it again."
+	}
+
+	var narrowed []string
+	if n := len(scope.Projects); n > 0 {
+		narrowed = append(narrowed, fmt.Sprintf("%d project(s)", n))
+	}
+	if n := len(scope.Sessions); n > 0 {
+		narrowed = append(narrowed, fmt.Sprintf("%d window(s)", n))
+	}
+	if len(narrowed) == 0 {
+		return "The censer is drawn everywhere."
+	}
+
+	return fmt.Sprintf("The censer is drawn in %s. Here: %v",
+		strings.Join(narrowed, " and "),
+		scope.Allows(project, os.Getenv("CLAUDE_CODE_SESSION_ID")))
 }
 
 // runStatuslineConfig installs, removes, or reports the user's status line

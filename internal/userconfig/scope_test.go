@@ -15,7 +15,7 @@ const (
 // A fresh install draws everywhere. Anything else would make the plugin
 // invisible until the user found a setting they did not know existed.
 func TestAnEmptyScopeAllowsEveryProject(t *testing.T) {
-	if !LoadScope(t.TempDir()).Allows(here) {
+	if !LoadScope(t.TempDir()).Allows(here, "") {
 		t.Fatal("a fresh scope refused a project")
 	}
 }
@@ -29,10 +29,10 @@ func TestAddingOneProjectExcludesTheRest(t *testing.T) {
 	}
 
 	scope := LoadScope(data)
-	if !scope.Allows(here) {
+	if !scope.Allows(here, "") {
 		t.Fatal("the chosen project was excluded")
 	}
-	if scope.Allows(elsewhere) {
+	if scope.Allows(elsewhere, "") {
 		t.Fatal("every other project is still included")
 	}
 }
@@ -51,7 +51,7 @@ func TestRemovingTheLastProjectRestoresEveryProject(t *testing.T) {
 	}
 
 	for _, project := range []string{here, elsewhere} {
-		if !LoadScope(data).Allows(project) {
+		if !LoadScope(data).Allows(project, "") {
 			t.Fatalf("%s is still excluded after the list was emptied", project)
 		}
 	}
@@ -98,7 +98,7 @@ func TestACorruptScopeAllowsEveryProject(t *testing.T) {
 		[]byte("{not json"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if !LoadScope(data).Allows(here) {
+	if !LoadScope(data).Allows(here, "") {
 		t.Fatal("a corrupt scope hid the status line")
 	}
 }
@@ -114,7 +114,7 @@ func TestPausingHidesEveryProjectAndIsReversible(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 	for _, project := range []string{here, elsewhere} {
-		if LoadScope(data).Allows(project) {
+		if LoadScope(data).Allows(project, "") {
 			t.Fatalf("%s still shows a censer while paused", project)
 		}
 	}
@@ -129,10 +129,79 @@ func TestPausingHidesEveryProjectAndIsReversible(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	if !LoadScope(data).Allows(here) {
+	if !LoadScope(data).Allows(here, "") {
 		t.Fatal("resuming did not bring the chosen project back")
 	}
-	if LoadScope(data).Allows(elsewhere) {
+	if LoadScope(data).Allows(elsewhere, "") {
 		t.Fatal("resuming widened the scope")
+	}
+}
+
+const (
+	windowA = "aaaa-1111"
+	windowB = "bbbb-2222"
+)
+
+// Two windows on the same project cannot be told apart by project scope, so
+// this is the only way to say "this one, not the other".
+func TestOneWindowExcludesTheOthers(t *testing.T) {
+	data := t.TempDir()
+
+	if err := SaveScope(data, LoadScope(data).AddSession(windowA)); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	scope := LoadScope(data)
+	if !scope.Allows(here, windowA) {
+		t.Fatal("the chosen window was excluded")
+	}
+	if scope.Allows(here, windowB) {
+		t.Fatal("another window on the same project still draws")
+	}
+}
+
+// A session id dies with its window. Leaving one behind would hide the censer
+// everywhere with nothing to explain it - the failure this scoping replaced.
+func TestAClosedWindowStopsNarrowingTheScope(t *testing.T) {
+	data := t.TempDir()
+
+	if err := SaveScope(data, LoadScope(data).AddSession(windowA)); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := SaveScope(data, LoadScope(data).RemoveSession(windowA)); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	scope := LoadScope(data)
+	for _, window := range []string{windowA, windowB, ""} {
+		if !scope.Allows(here, window) {
+			t.Fatalf("window %q is still excluded after the chosen one closed", window)
+		}
+	}
+}
+
+// Project and window rules both have to agree, so neither can quietly widen
+// what the other narrowed.
+func TestProjectAndWindowRulesBothApply(t *testing.T) {
+	data := t.TempDir()
+
+	scope := LoadScope(data).Add(here).AddSession(windowA)
+	if err := SaveScope(data, scope); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	scope = LoadScope(data)
+	for _, c := range []struct {
+		project, window string
+		want            bool
+	}{
+		{here, windowA, true},
+		{here, windowB, false},
+		{elsewhere, windowA, false},
+		{elsewhere, windowB, false},
+	} {
+		if got := scope.Allows(c.project, c.window); got != c.want {
+			t.Fatalf("Allows(%q, %q) = %v, want %v", c.project, c.window, got, c.want)
+		}
 	}
 }
