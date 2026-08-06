@@ -75,19 +75,24 @@ Go source root를 plugin이 직접 상대경로로 실행하지 않는다.
 
 ## 3. Runtime bootstrap
 
-### FR-020 명시적 설치
+### FR-020 명시적 설치 — v0.3.0에서 개정
 
-다음에서만 runtime 설치를 시작할 수 있다.
+**개정 (2026-08-06, v0.3.0).** 원문은 runtime을 인터넷에서 받아오는 것을 전제로
+했고, 그래서 SessionStart hook에서의 설치를 금지했다. v0.3.0부터 runtime은
+plugin 안에 함께 배포되므로 "설치"는 복사다. 새로 신뢰하는 것이 없으므로 별도
+동의를 물을 대상도 아니다. 개정된 규칙:
 
-- `/prayops:setup`
-- `/prayops:pray` first-use ensure
-- 사용자가 직접 `scripts/setup.sh` 실행
+- SessionStart hook은 plugin 안의 binary를 `${CLAUDE_PLUGIN_DATA}/bin`으로
+  복사할 수 있다. 네트워크를 쓰지 않는다.
+- 어떤 hook도 네트워크에서 코드를 받아오지 않는다. 이 금지는 그대로다.
+- status line은 여전히 설치하지 않는다.
 
-다음에서는 설치 금지:
+원문 (v0.2.x까지 유효):
 
-- SessionStart hook
-- PreToolUse/PostToolUse hook
-- status line
+> 다음에서만 runtime 설치를 시작할 수 있다: `/prayops:setup`,
+> `/prayops:pray` first-use ensure, 사용자가 직접 `scripts/setup.sh` 실행.
+> 다음에서는 설치 금지: SessionStart hook, PreToolUse/PostToolUse hook,
+> status line.
 - plugin load
 
 ### FR-021 설치 사전 정보
@@ -266,13 +271,28 @@ setup에서 사용자의 `~/.claude/settings.json` statusLine 변경 전에 확�
 
 실제 command path는 설치된 runtime absolute path를 사용한다.
 
-### FR-053 Output
+### FR-053 Output — v0.2.0에서 개정
 
-- 1줄 기본
+**개정 (2026-08-05, v0.2.0).** 원문의 "1줄 기본"은 status line이 한 줄짜리
+표면이라는 잘못된 전제에서 나왔다. Claude Code status line은 명령이 출력한
+줄마다 한 행씩 그린다. 향로를 별도 터미널로 밀어냈던 것이 이 오독의 결과다.
+
+- 향로 scene을 여러 줄로 그린다. 좁은 창에서는 한 줄로 물러난다.
 - COLUMNS에 따라 compact
 - ANSI color optional
-- full animation 금지
+- 초당 한 프레임을 넘지 않는다 (`refreshInterval` 최소 1초). 부드러운
+  animation은 `prayops watch`에만 있다.
 - prompt·transcript를 읽지 않음
+
+### FR-054 범위 — v0.3.0에서 추가
+
+`statusLine`은 사용자 `settings.json`에서만 읽힌다. project의
+`.claude/settings.json`이나 `settings.local.json`에 넣은 것은 조용히 무시되므로,
+"이 프로젝트에서만"을 설정으로 구현하면 어디에서도 보이지 않게 된다. 범위는
+runtime이 판단한다: status line payload의 `workspace.project_dir`를 읽어
+`${CLAUDE_PLUGIN_DATA}/statusline-scope.json`의 allowlist와 대조한다. 목록이
+비어 있으면 모든 project에서 그린다. 저장하는 것은 경로가 아니라 project key
+hash다.
 
 ## 7. Hooks
 

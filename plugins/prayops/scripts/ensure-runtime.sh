@@ -18,10 +18,21 @@
 set -eu
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-}"
+
+# Never the raw environment value. A skill telling the model to run this from
+# the Bash tool - which both the doctor and setup skills do as a repair step -
+# hands it another plugin's directory, and installing there writes a
+# runtime.json that makes the wrong directory look legitimate from then on.
+. "$PLUGIN_ROOT/scripts/plugin-data.sh"
+PLUGIN_DATA="$(resolve_plugin_data)"
 
 if [ -z "$PLUGIN_DATA" ]; then
-  echo "PrayOps: CLAUDE_PLUGIN_DATA is not set." >&2
+  cat >&2 <<EOF
+PrayOps: cannot tell which data directory is ours.
+CLAUDE_PLUGIN_DATA=${CLAUDE_PLUGIN_DATA:-<unset>}
+Nothing was installed. Inside Claude Code this is set for you; from a shell,
+set it to the plugin's own data directory.
+EOF
   exit 1
 fi
 
@@ -45,6 +56,13 @@ fi
 
 version="$(sed -n 's/.*"runtimeVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
   "$PLUGIN_ROOT/runtime-manifest.json")"
+
+# The two happen to match today only because a test forces them to. Read the
+# plugin's own version rather than repeating the runtime's under its name.
+plugin_version() {
+  sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    "$PLUGIN_ROOT/.claude-plugin/plugin.json" | head -1
+}
 target="$PLUGIN_DATA/bin/prayops"
 record="$PLUGIN_DATA/runtime.json"
 
@@ -64,6 +82,10 @@ mkdir -p "$PLUGIN_DATA/bin" "$PLUGIN_DATA/tmp"
 # binary - and so the running status line keeps executing the old inode until
 # the new one is complete.
 staged="$PLUGIN_DATA/tmp/prayops.$$"
+# This runs from a hook on a timeout, and a 4.5MB copy on a slow home
+# directory can be killed part way. Without this each one strands a file.
+trap 'rm -f "$staged"' EXIT INT TERM
+rm -f "$PLUGIN_DATA/tmp"/prayops.*
 cp "$source_bin" "$staged"
 chmod 0755 "$staged"
 
@@ -74,11 +96,16 @@ if ! "$staged" doctor --bootstrap-smoke >/dev/null 2>&1; then
 fi
 
 mv -f "$staged" "$target"
-cat > "$record" <<EOF
+
+# Written the same way, because a crash between the two leaves a binary the
+# runtime cannot recognise as its own - and then it falls back to the
+# environment, which is the value this whole script exists to distrust.
+cat > "$record.new" <<EOF
 {
   "runtimeVersion": "$version",
-  "pluginVersion": "$version",
+  "pluginVersion": "$(plugin_version)",
   "platform": "${os}/${arch}",
   "source": "plugin"
 }
 EOF
+mv -f "$record.new" "$record"

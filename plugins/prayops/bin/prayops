@@ -8,27 +8,21 @@
 # off to install something. Nothing is downloaded either way.
 set -eu
 
-if [ -n "${CLAUDE_PLUGIN_DATA:-}" ]; then
-  if [ -x "${CLAUDE_PLUGIN_DATA}/bin/prayops" ]; then
-    exec "${CLAUDE_PLUGIN_DATA}/bin/prayops" "$@"
-  fi
-
-  # CLAUDE_PLUGIN_DATA is only set per plugin inside a hook. Everywhere else -
-  # the Bash tool, a plain shell - it is whatever the parent process carried,
-  # which is some other plugin's directory. Only inside Claude Code's own
-  # <claude>/plugins/data/<market>-<plugin> layout is it a leak worth fixing.
-  parent="$(dirname "$CLAUDE_PLUGIN_DATA")"
-  if [ "$(basename "$parent")" = "data" ] &&
-    [ "$(basename "$(dirname "$parent")")" = "plugins" ]; then
-    for candidate in "$parent"/*prayops*; do
-      if [ -x "$candidate/bin/prayops" ]; then
-        exec "$candidate/bin/prayops" "$@"
-      fi
-    done
-  fi
-fi
-
 root="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Resolve the data directory before running anything, and pass the resolved
+# value down. Forwarding the inherited one is how state ended up in another
+# plugin's directory: the copy in our own directory does not exist yet on the
+# very first session, so the shipped binary below runs instead - and it sits
+# at runtime/<os>_<arch>/prayops, where it cannot work out the data directory
+# from its own location and would trust the environment.
+. "$root/scripts/plugin-data.sh"
+CLAUDE_PLUGIN_DATA="$(resolve_plugin_data)"
+export CLAUDE_PLUGIN_DATA
+
+if [ -n "$CLAUDE_PLUGIN_DATA" ] && [ -x "$CLAUDE_PLUGIN_DATA/bin/prayops" ]; then
+  exec "$CLAUDE_PLUGIN_DATA/bin/prayops" "$@"
+fi
 
 case "$(uname -s)" in
   Darwin) os=darwin ;;

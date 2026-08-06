@@ -17,34 +17,29 @@ censer is shown.
    that and stop.
 2. Report whether a status line is already configured:
    `"${CLAUDE_PLUGIN_ROOT}/bin/prayops" statusline status`
-3. Ask where the censer should appear, and say what each choice means:
-   - **this project only** - written to `.claude/settings.local.json` in the
-     project, which git ignores. Other projects are untouched.
-   - **everywhere** - written to the user's `settings.json`, so every Claude
-     Code session on this machine shows it.
-   - **nowhere** - skip it. `/prayops:pray` still draws the censer in the
-     conversation.
-4. For **everywhere**, show the plan first and only then apply it:
+3. Install the status line if it is not already there. It has to live in the
+   user's `settings.json`: Claude Code reads `statusLine` from there only, and
+   a copy in a project's `.claude/settings.json` or `settings.local.json` is
+   ignored without a word - scoping that way hides the censer everywhere.
    `"${CLAUDE_PLUGIN_ROOT}/bin/prayops" statusline install` changes nothing and
    exits 10 after printing what it would write, including any existing status
    line it would replace. Show that, get agreement, then run the same command
    with `--yes`.
    `"${CLAUDE_PLUGIN_ROOT}/bin/prayops" statusline uninstall --yes` restores
    what was there before.
-5. For **this project only**, add a `statusLine` entry to
-   `.claude/settings.local.json` in the project root, creating the file if it
-   is missing and leaving every other key alone:
-   ```json
-   {
-     "type": "command",
-     "command": "\"<CLAUDE_PLUGIN_DATA>/bin/prayops\" statusline claude",
-     "padding": 1,
-     "refreshInterval": 1
-   }
-   ```
-   Substitute the real absolute path. Use `settings.local.json`, never
-   `settings.json`: the path is specific to this machine and the second file
-   is committed.
+4. Ask which projects should show a censer, and set it:
+   - **every project** (the default):
+     `"${CLAUDE_PLUGIN_ROOT}/bin/prayops" statusline scope --everywhere`
+   - **this project only**:
+     `"${CLAUDE_PLUGIN_ROOT}/bin/prayops" statusline scope --only-here`
+     Run it again in any other project to add that one too.
+   - **not this project**:
+     `"${CLAUDE_PLUGIN_ROOT}/bin/prayops" statusline scope --not-here`
+   `... statusline scope` with no flag reports the current setting. Removing
+   the last chosen project restores every project rather than hiding it
+   everywhere.
+5. If the user wants no status line at all, say `/prayops:pray` still draws
+   the censer in the conversation, and skip to the next step.
 6. Ask separately whether to install the optional `/pray` alias:
    - `"${CLAUDE_PLUGIN_ROOT}/bin/prayops" alias install` changes nothing and
      exits 10 after printing where it would write.
