@@ -15,27 +15,42 @@ import (
 // the mouth, ears on both sides, three feet. Every row is centred on the same
 // column - an earlier version had each row on its own axis, which read as a
 // wobble rather than a shape.
+// Glyphs are chosen for where they sit *inside* their cell, not just which
+// cell they occupy. ▏ hugs the left edge, so sticks drawn with it stood a
+// little under half a cell left of the embers above them; ▮ is centred. ▘ is
+// the upper-left quadrant, so a row of them put the left foot outside the
+// pedestal and the middle foot a quarter cell off axis - ▝ ▀ ▘ mirrors.
 var censer = []string{
-	"  ▄▄▄▄▄▄▄  ",
-	" ▐▒▒▒▒▒▒▒▌ ",
-	"▐▌███████▐▌",
-	" ▝▀▀▀▀▀▀▀▘ ",
-	"  ▘  ▘  ▘  ",
+	"     ▮ ▮ ▮     ",
+	"    ▗▄▄▄▄▄▖    ",
+	" ▗▄▟███████▙▄▖ ",
+	" ▝▀▜███████▛▀▘ ",
+	"    ▝▀▀▀▀▀▘    ",
+	"    ▝  ▀  ▘    ",
 }
 
 // CenserWidth is the width of every row of the censer, in cells.
-const CenserWidth = 11
+const CenserWidth = 15
 
-// smokeRow is the single row of smoke above the censer.
+// emberRow sits on the tips of the incense, above the censer. It is the one
+// warm thing in the scene, so it is the one thing drawn in red.
+const emberRow = 1
+
+// Ember is the lit tip of a stick of incense.
+const Ember = '▪'
+
+// smokeRows is how many rows of smoke rise above the embers.
 //
-// There used to be three, with puffs landing on random rows. Whenever nothing
-// landed on the top row it collapsed away, so the scene was 9, 10, or 11 rows
-// depending on the second - and the prompt below it moved. One row, always
-// drawn, cannot do that.
-const smokeRow = 1
+// Two, so a puff can visibly climb from one to the other. One row could only
+// change density, which reads as still. Both rows always draw something: the
+// first version put puffs on random rows, and whenever the top one stayed
+// empty it collapsed, taking a line of height with it and moving the prompt
+// underneath - 23 frames out of 300.
+const smokeRows = 2
 
-// smokeColumns are where smoke can rise, over the mouth of the censer.
-var smokeColumns = []int{2, 5, 8}
+// smokeColumns are where the sticks stand, so the smoke, the embers and the
+// incense all share one set of columns.
+var smokeColumns = []int{5, 7, 9}
 
 // Prayer is the emoji a prayer appears as.
 const Prayer = "🙏"
@@ -72,7 +87,7 @@ func Scene(state contracts.SessionState, opts SceneOptions) []string {
 		return nil
 	}
 
-	height := smokeRow + len(censer)
+	height := smokeRows + emberRow + len(censer)
 	g := newGrid(columns, height)
 
 	// One frame per second. Anything finer would be invisible: the status line
@@ -83,34 +98,46 @@ func Scene(state contracts.SessionState, opts SceneOptions) []string {
 	}
 
 	drawSmoke(g, frame, burning(phaseOf(state)))
+	for _, column := range smokeColumns {
+		g.set(column, smokeRows, Ember)
+	}
 	for i, row := range censer {
-		g.text(0, smokeRow+i, row)
+		g.text(0, smokeRows+emberRow+i, row)
 	}
 	drawPrayers(g, state, opts.Now, columns)
 
-	lines := g.lines()
+	lines := g.lines(opts.Color)
 	return append(lines, Render(state, Options{
 		Now: opts.Now, Columns: columns, Color: opts.Color,
 	}))
 }
 
-// drawSmoke puts a puff over each vent, on the columns the feet stand on.
+// drawSmoke lifts puffs through the two rows above the censer.
 //
 // The puffs never move sideways. They used to drift by a hashed offset, which
-// made the smoke wander off the censer's axis every second - movement in the
-// corner of the eye, on a line the user is trying to type under. Only the
-// density changes now, so the shape holds still and the scene still breathes.
+// pulled the smoke off the censer's axis every second - movement in the corner
+// of the eye, on a line the user is trying to type under. They climb instead:
+// which column is high and which is low changes with the frame, so the smoke
+// moves without the shape wandering.
 func drawSmoke(g *grid, frame uint64, active bool) {
-	if !active {
-		// A resting censer still smokes, or the row would collapse and take a
-		// line of height with it.
-		g.set(smokeColumns[len(smokeColumns)/2], 0, '░')
-		return
+	// Both rows always hold exactly three puffs, on the columns the sticks
+	// stand in. Only the density changes.
+	//
+	// Two earlier versions moved the puffs instead - first onto random rows,
+	// then one column left or right. Both made the plume's footprint change
+	// every second directly above the line the user types on, which is the
+	// complaint that started all of this. Density alone is visible without
+	// anything shifting: nothing to track, nothing to wobble.
+	dense := 0.25
+	if active {
+		dense = 0.55
 	}
 
 	for i, column := range smokeColumns {
+		g.set(column, smokeRows-1, '▒')
+
 		glyph := '░'
-		if effect.Hash01(frame, i, 0, "puff") > 0.5 {
+		if effect.Hash01(frame, i, 0, "puff") < dense {
 			glyph = '▒'
 		}
 		g.set(column, 0, glyph)
@@ -241,16 +268,26 @@ func (g *grid) free(x, y, width int) bool {
 	return true
 }
 
-func (g *grid) lines() []string {
+// lines renders the grid. The ember is the one cell that carries its own
+// colour, so the escape is written around that rune alone rather than around
+// the row - anything wider would tint the censer too.
+func (g *grid) lines(color bool) []string {
 	out := make([]string, 0, len(g.cells))
 	for _, row := range g.cells {
 		var b strings.Builder
 		for _, r := range row {
-			if r == covered {
-				continue
+			switch {
+			case r == covered:
+			case r == Ember && color:
+				b.WriteString(ansiEmberLit)
+				b.WriteRune(r)
+				b.WriteString(ansiReset)
+			default:
+				b.WriteRune(r)
 			}
-			b.WriteRune(r)
 		}
+		// Trimming has to ignore the escapes, which never end a row anyway:
+		// only spaces do, and TrimRight sees them plainly.
 		out = append(out, strings.TrimRight(b.String(), " "))
 	}
 	return out

@@ -36,6 +36,9 @@ const (
 	ansiEmber = "\x1b[38;5;179m" // muted gold
 	ansiGray  = "\x1b[38;5;245m" // smoke
 	ansiGreen = "\x1b[38;5;108m"
+
+	// The lit tip of a stick of incense, the one warm thing in the scene.
+	ansiEmberLit = "\x1b[38;5;203m"
 )
 
 // phaseLabels are the short labels shown in the status line. The longer
