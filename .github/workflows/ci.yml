@@ -41,6 +41,33 @@ jobs:
 
       - run: go test -race ./...
 
+  # The plugin ships its runtime, so those binaries are committed - and a
+  # committed binary can quietly stop matching the source it claims to be.
+  # The build is reproducible on purpose so this can compare byte for byte.
+  shipped-runtime-is-current:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Rebuild and compare
+        run: |
+          set -eu
+          ./scripts/build-plugin-runtime.sh "$RUNNER_TEMP/runtime"
+
+          for target in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64; do
+            committed="plugins/prayops/runtime/$target/prayops"
+            if ! cmp -s "$committed" "$RUNNER_TEMP/runtime/$target/prayops"; then
+              echo "$committed does not match the source." >&2
+              echo "Run ./scripts/build-plugin-runtime.sh and commit the result." >&2
+              exit 1
+            fi
+            test -x "$committed" || { echo "$committed is not executable" >&2; exit 1; }
+            echo "$target matches"
+          done
+
   cross-build:
     runs-on: ubuntu-latest
     strategy:

@@ -6,10 +6,14 @@ disable-model-invocation: true
 
 Never start the PrayOps altar from the Bash tool. It runs until the user quits, so it would hold the tool open for the rest of the session. This skill only tells the user how to start it themselves.
 
-1. Check whether the runtime is installed at `${CLAUDE_PLUGIN_DATA}/bin/prayops`. If it is not, say so and point at `/prayops:setup` instead of showing the commands below.
+1. Find the runtime's real path, which is what the user has to type:
+   `"${CLAUDE_PLUGIN_ROOT}/bin/prayops" doctor --json` reports it. Build the
+   path from that, not from `$CLAUDE_PLUGIN_DATA` - in the Bash tool that
+   variable is whatever the parent process carried, often another plugin's
+   directory.
 
 2. Report whether a watcher is already running:
-   `"${CLAUDE_PLUGIN_DATA}/bin/prayops" doctor` includes a `Watcher` line.
+   `"${CLAUDE_PLUGIN_ROOT}/bin/prayops" doctor` includes a `Watcher` line.
    A watcher that is not running is the normal state, not a problem.
 
 3. Show the command with the absolute path, because `prayops` is not on the user's PATH:
@@ -32,6 +36,8 @@ Never start the PrayOps altar from the Bash tool. It runs until the user quits, 
    - `--motion off` stills the smoke and steps the dissolve, for reduced motion.
    - `NO_COLOR` does the same and drops colour.
 
-6. Explain the split: the Claude Code status line is a one-line snapshot, and the incense smoke and prayer dissolve only appear in the separate watcher.
+6. Explain the split, and do not oversell the watcher: the censer already
+   appears in the Claude Code status line and in `/prayops:pray`. The watcher
+   adds smooth animation and the image dissolve, and it is optional.
 
 7. `q`, `esc`, or `ctrl+c` quits it and restores the terminal.

@@ -1,10 +1,15 @@
 {
-  "description": "PrayOps lifecycle state hooks. Runtime installation is never performed by hooks.",
+  "description": "PrayOps lifecycle state hooks. Nothing is downloaded; the runtime ships inside the plugin and is copied into place on the first session.",
   "hooks": {
     "SessionStart": [
       {
         "matcher": "startup|resume|clear|compact",
         "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/ensure-runtime.sh\" >/dev/null 2>&1 || true",
+            "timeout": 10
+          },
           {
             "type": "command",
             "command": "test ! -x \"${CLAUDE_PLUGIN_DATA}/bin/prayops\" || \"${CLAUDE_PLUGIN_DATA}/bin/prayops\" hook claude",

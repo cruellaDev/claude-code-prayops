@@ -1,16 +1,51 @@
 #!/usr/bin/env sh
+# The launcher on the Bash tool's PATH.
+#
+# It prefers the copy in the data directory, because that is the one the
+# status line runs and the one doctor reports on. When it is not there yet -
+# a session that has not started since the plugin was installed - it falls
+# back to the binary shipped inside the plugin rather than sending the user
+# off to install something. Nothing is downloaded either way.
 set -eu
 
-if [ -z "${CLAUDE_PLUGIN_DATA:-}" ]; then
-  echo "PrayOps must be invoked from the Claude Code plugin environment." >&2
-  exit 1
+if [ -n "${CLAUDE_PLUGIN_DATA:-}" ]; then
+  if [ -x "${CLAUDE_PLUGIN_DATA}/bin/prayops" ]; then
+    exec "${CLAUDE_PLUGIN_DATA}/bin/prayops" "$@"
+  fi
+
+  # CLAUDE_PLUGIN_DATA is only set per plugin inside a hook. Everywhere else -
+  # the Bash tool, a plain shell - it is whatever the parent process carried,
+  # which is some other plugin's directory. Only inside Claude Code's own
+  # <claude>/plugins/data/<market>-<plugin> layout is it a leak worth fixing.
+  parent="$(dirname "$CLAUDE_PLUGIN_DATA")"
+  if [ "$(basename "$parent")" = "data" ] &&
+    [ "$(basename "$(dirname "$parent")")" = "plugins" ]; then
+    for candidate in "$parent"/*prayops*; do
+      if [ -x "$candidate/bin/prayops" ]; then
+        exec "$candidate/bin/prayops" "$@"
+      fi
+    done
+  fi
 fi
 
-runtime="${CLAUDE_PLUGIN_DATA}/bin/prayops"
+root="$(cd "$(dirname "$0")/.." && pwd)"
 
-if [ ! -x "$runtime" ]; then
-  echo "PrayOps runtime is not installed. Run /prayops:setup." >&2
-  exit 127
+case "$(uname -s)" in
+  Darwin) os=darwin ;;
+  Linux) os=linux ;;
+  *) echo "PrayOps: $(uname -s) is not supported." >&2; exit 11 ;;
+esac
+
+case "$(uname -m)" in
+  arm64 | aarch64) arch=arm64 ;;
+  x86_64 | amd64) arch=amd64 ;;
+  *) echo "PrayOps: $(uname -m) is not supported." >&2; exit 11 ;;
+esac
+
+shipped="$root/runtime/${os}_${arch}/prayops"
+if [ ! -x "$shipped" ]; then
+  echo "PrayOps: the plugin ships no binary for ${os}/${arch}." >&2
+  exit 11
 fi
 
-exec "$runtime" "$@"
+exec "$shipped" "$@"
