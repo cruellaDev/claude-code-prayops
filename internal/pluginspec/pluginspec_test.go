@@ -294,6 +294,7 @@ func TestHooksCoverLifecycleAndGuardMissingRuntime(t *testing.T) {
 		if !ok || len(matchers) == 0 {
 			t.Fatalf("hooks.json does not handle %s", event)
 		}
+		records := false
 		for _, matcher := range matchers {
 			for _, hook := range matcher.Hooks {
 				if hook.Type != "command" {
@@ -302,16 +303,22 @@ func TestHooksCoverLifecycleAndGuardMissingRuntime(t *testing.T) {
 				if hook.Timeout <= 0 {
 					t.Fatalf("%s hook has no timeout", event)
 				}
-				if !strings.Contains(hook.Command, `${CLAUDE_PLUGIN_DATA}/bin/prayops`) {
-					t.Fatalf("%s hook does not call the installed runtime: %q", event, hook.Command)
+				// The runtime ships inside the plugin, so putting it in place
+				// is a copy. Reaching the network from a hook still is not.
+				if strings.Contains(hook.Command, "curl") || strings.Contains(hook.Command, "wget") {
+					t.Fatalf("%s hook downloads something: %q", event, hook.Command)
 				}
+				if !strings.Contains(hook.Command, `${CLAUDE_PLUGIN_DATA}/bin/prayops`) {
+					continue
+				}
+				records = true
 				if !strings.Contains(hook.Command, `test ! -x`) {
 					t.Fatalf("%s hook is not guarded against a missing runtime: %q", event, hook.Command)
 				}
-				if strings.Contains(hook.Command, "setup") || strings.Contains(hook.Command, "curl") {
-					t.Fatalf("%s hook must never install anything: %q", event, hook.Command)
-				}
 			}
+		}
+		if !records {
+			t.Fatalf("no %s hook records an event", event)
 		}
 	}
 }
@@ -337,24 +344,111 @@ func TestHookCommandsAreNoOpWithoutRuntime(t *testing.T) {
 	}
 }
 
-// FR-012 / D-011: the launcher on the Bash tool PATH points users at setup
-// instead of downloading anything itself.
-func TestLauncherRefusesWithoutRuntime(t *testing.T) {
+// FR-012 / D-011: installing the plugin is the whole installation. The
+// launcher works out of the box because the binary shipped with it - there is
+// no separate step to send the user off to, and nothing to download.
+func TestLauncherRunsWithoutASeparateInstall(t *testing.T) {
 	launcher, err := filepath.Abs(pluginPath + "/bin/prayops")
 	if err != nil {
 		t.Fatalf("resolve launcher: %v", err)
 	}
 
 	cmd := exec.Command(launcher, "version")
+	// An empty data directory: the plugin is installed, no session has run.
 	cmd.Env = append(os.Environ(), "CLAUDE_PLUGIN_DATA="+t.TempDir())
 
 	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("launcher succeeded without a runtime: %q", out)
+	if err != nil {
+		t.Fatalf("launcher failed with a fresh data directory: %v\n%s", err, out)
 	}
-	if !strings.Contains(string(out), "/prayops:setup") {
-		t.Fatalf("launcher does not point at setup: %q", out)
+	if !strings.Contains(string(out), manifestRuntimeVersion(t)) {
+		t.Fatalf("launcher ran a different version: %q", out)
 	}
+}
+
+// The runtime shipped in the plugin is put in place by a copy, and a copy
+// alone: a hook that reached the network would be installing code the user
+// never agreed to.
+func TestEnsureRuntimeInstallsByCopying(t *testing.T) {
+	data := t.TempDir()
+
+	script, err := filepath.Abs(pluginPath + "/scripts/ensure-runtime.sh")
+	if err != nil {
+		t.Fatalf("resolve script: %v", err)
+	}
+	root, err := filepath.Abs(pluginPath)
+	if err != nil {
+		t.Fatalf("resolve plugin root: %v", err)
+	}
+
+	raw, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+	for _, forbidden := range []string{"curl", "wget", "http://", "https://"} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("ensure-runtime.sh mentions %q", forbidden)
+		}
+	}
+
+	run := func() string {
+		t.Helper()
+		cmd := exec.Command(script)
+		cmd.Env = append(os.Environ(),
+			"CLAUDE_PLUGIN_ROOT="+root, "CLAUDE_PLUGIN_DATA="+data)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("ensure-runtime: %v\n%s", err, out)
+		}
+		return string(out)
+	}
+
+	run()
+
+	installed := filepath.Join(data, "bin", "prayops")
+	info, err := os.Stat(installed)
+	if err != nil {
+		t.Fatalf("nothing was installed: %v", err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("the installed runtime is not executable (mode %v)", info.Mode().Perm())
+	}
+
+	out, err := exec.Command(installed, "version").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), manifestRuntimeVersion(t)) {
+		t.Fatalf("installed runtime reports %q: %v", out, err)
+	}
+
+	// Running again is free: an unchanged version must not re-copy, because
+	// this runs on every session start.
+	before, err := os.Stat(installed)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	run()
+	after, err := os.Stat(installed)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if !before.ModTime().Equal(after.ModTime()) {
+		t.Fatal("an up-to-date runtime was copied again")
+	}
+}
+
+func manifestRuntimeVersion(t *testing.T) string {
+	t.Helper()
+
+	raw, err := os.ReadFile(filepath.Join(pluginPath, "runtime-manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest struct {
+		RuntimeVersion string `json:"runtimeVersion"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	return manifest.RuntimeVersion
 }
 
 // FR-012: the plugin is copied into a cache on install, so nothing inside it
@@ -365,6 +459,12 @@ func TestPluginIsSelfContained(t *testing.T) {
 			return err
 		}
 		if info.IsDir() {
+			return nil
+		}
+		// The shipped binaries are not text. Scanning them for path fragments
+		// finds compiler leftovers, not a script reaching outside the plugin,
+		// which is what this check is for.
+		if strings.HasPrefix(filepath.ToSlash(strings.TrimPrefix(path, pluginPath+"/")), "runtime/") {
 			return nil
 		}
 
@@ -398,6 +498,51 @@ func TestShippedScriptsAreExecutable(t *testing.T) {
 		}
 		if info.Mode().Perm()&0o111 == 0 {
 			t.Fatalf("%s is not executable (mode %v)", rel, info.Mode().Perm())
+		}
+	}
+}
+
+// Skills run their commands through the Bash tool, which does not get the
+// environment a hook gets. A skill that reaches for CLAUDE_PROJECT_DIR or
+// CLAUDE_SESSION_ID silently passes an empty string; one that builds a path
+// from CLAUDE_PLUGIN_DATA gets another plugin's directory, which is how
+// doctor came to report a runtime it had just installed as missing.
+func TestSkillsOnlyUseVariablesTheBashToolHas(t *testing.T) {
+	// CLAUDE_PLUGIN_ROOT and CLAUDE_PLUGIN_DATA are substituted into skill
+	// text by Claude Code, so they are fine to write; the rest have to exist
+	// in the shell that runs the command.
+	banned := map[string]string{
+		"CLAUDE_SESSION_ID":  "CLAUDE_CODE_SESSION_ID",
+		"CLAUDE_PROJECT_DIR": "$PWD",
+	}
+
+	skills, err := filepath.Glob(filepath.Join(pluginPath, "skills", "*", "SKILL.md"))
+	if err != nil || len(skills) == 0 {
+		t.Fatalf("no skills found: %v", err)
+	}
+
+	for _, skill := range skills {
+		raw, err := os.ReadFile(skill)
+		if err != nil {
+			t.Fatalf("read %s: %v", skill, err)
+		}
+		body := string(raw)
+
+		for name, instead := range banned {
+			// CLAUDE_SESSION_ID is a prefix of nothing, but CLAUDE_PROJECT_DIR
+			// and the allowed names share none either, so a plain search is
+			// enough as long as the longer name is checked first.
+			if strings.Contains(strings.ReplaceAll(body, "CLAUDE_CODE_SESSION_ID", ""), name) {
+				t.Errorf("%s uses %s, which the Bash tool does not set; use %s",
+					filepath.Base(filepath.Dir(skill)), name, instead)
+			}
+		}
+
+		// The runtime is reached through the launcher, which resolves the data
+		// directory itself.
+		if strings.Contains(body, "${CLAUDE_PLUGIN_DATA}/bin/prayops") {
+			t.Errorf("%s builds a runtime path from CLAUDE_PLUGIN_DATA; use ${CLAUDE_PLUGIN_ROOT}/bin/prayops",
+				filepath.Base(filepath.Dir(skill)))
 		}
 	}
 }

@@ -2,6 +2,11 @@ module github.com/cruellaDev/claude-code-prayops
 
 go 1.26
 
+// Pinned so the runtime binaries committed under plugins/prayops/runtime can be
+// rebuilt byte for byte in CI. A floating patch release would make that check
+// fail for a reason nobody changed.
+toolchain go1.26.5
+
 require (
 	charm.land/bubbletea/v2 v2.0.8
 	github.com/mattn/go-runewidth v0.0.27
