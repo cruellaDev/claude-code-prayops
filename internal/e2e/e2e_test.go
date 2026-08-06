@@ -201,11 +201,24 @@ func (w *world) runtime(stdin string, args ...string) result {
 	return w.exec(filepath.Join(w.data, "bin", "prayops"), stdin, args...)
 }
 
+// poisoned runs the installed binary with CLAUDE_PLUGIN_DATA pointing
+// somewhere else, the way an inherited environment does.
+func (w *world) poisoned(data, stdin string, args ...string) result {
+	w.t.Helper()
+	return w.execEnv(filepath.Join(w.data, "bin", "prayops"), stdin,
+		append(w.env(), "CLAUDE_PLUGIN_DATA="+data), args...)
+}
+
 func (w *world) exec(command, stdin string, args ...string) result {
+	w.t.Helper()
+	return w.execEnv(command, stdin, w.env(), args...)
+}
+
+func (w *world) execEnv(command, stdin string, env []string, args ...string) result {
 	w.t.Helper()
 
 	cmd := exec.Command(command, args...)
-	cmd.Env = w.env()
+	cmd.Env = env
 	cmd.Stdin = strings.NewReader(stdin)
 
 	out, err := cmd.CombinedOutput()
@@ -490,5 +503,40 @@ func writeManifestVersion(t *testing.T, root, v string) {
 	}
 	if err := os.WriteFile(path, updated, 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
+	}
+}
+
+// A leaked CLAUDE_PLUGIN_DATA must not send the runtime to another plugin's
+// directory.
+//
+// Claude Code sets that variable per plugin for hooks, but the status line is
+// an ordinary settings entry and a shell is an ordinary shell: both inherit
+// whatever the parent process happened to carry. In a real installation it
+// carried a different plugin's data directory, so the hooks wrote here and
+// the status line read there. Nothing failed - the censer simply drew IDLE
+// forever and no prayer ever appeared.
+func TestALeakedPluginDataDoesNotRedirectTheRuntime(t *testing.T) {
+	w := setup(t)
+	w.install()
+
+	if got := w.runtime(
+		`{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash"}`,
+		"hook", "claude"); got.code != 0 {
+		t.Fatalf("hook: exit %d\n%s", got.code, got.output)
+	}
+
+	// Another plugin's data directory, with the state tree a used one has.
+	elsewhere := filepath.Join(t.TempDir(), "codex-openai-codex")
+	if err := os.MkdirAll(filepath.Join(elsewhere, "state", "sessions"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	line := w.poisoned(elsewhere, `{"session_id":"s1"}`, "statusline", "claude")
+	if !strings.Contains(line.output, "WORKING") {
+		t.Fatalf("the status line read the leaked directory:\n%s", line.output)
+	}
+
+	if health := w.poisoned(elsewhere, "", "doctor"); health.code != 0 {
+		t.Fatalf("doctor read the leaked directory:\n%s", health.output)
 	}
 }
