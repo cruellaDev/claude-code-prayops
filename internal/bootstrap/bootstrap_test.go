@@ -532,8 +532,8 @@ func TestForeignPluginDataIsCorrected(t *testing.T) {
 		t.Fatalf("resolve plugin root: %v", err)
 	}
 
-	// A data root holding several plugins' directories, ours among them.
-	dataRoot := t.TempDir()
+	// Claude Code's own layout: <...>/plugins/data/<marketplace>-<plugin>.
+	dataRoot := filepath.Join(t.TempDir(), "plugins", "data")
 	ours := filepath.Join(dataRoot, "prayops-prayops")
 	theirs := filepath.Join(dataRoot, "codex-openai-codex")
 	for _, dir := range []string{ours, theirs} {
@@ -573,7 +573,7 @@ func TestACustomDataDirectoryIsObeyed(t *testing.T) {
 		t.Fatalf("resolve plugin root: %v", err)
 	}
 
-	dataRoot := t.TempDir()
+	dataRoot := filepath.Join(t.TempDir(), "plugins", "data")
 	theirs := filepath.Join(dataRoot, "codex-openai-codex")
 	if err := os.MkdirAll(theirs, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -592,5 +592,44 @@ func TestACustomDataDirectoryIsObeyed(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(theirs, "bin", "prayops")); statErr != nil {
 		t.Fatalf("did not install where it was told: %v\n%s", statErr, out)
+	}
+}
+
+// The correction must only fire inside Claude Code's own layout. A custom
+// directory that merely happens to sit beside something named prayops - a
+// checkout, an unpacked archive - is not a leak, and redirecting there
+// installs somewhere the caller never asked for.
+func TestCorrectionOnlyAppliesInsideThePluginLayout(t *testing.T) {
+	root, err := filepath.Abs(pluginRoot)
+	if err != nil {
+		t.Fatalf("resolve plugin root: %v", err)
+	}
+
+	base := t.TempDir()
+	asked := filepath.Join(base, "somewhere")
+	decoy := filepath.Join(base, "prayops_docs") // an unpacked copy, not plugin data
+	for _, dir := range []string{asked, decoy} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+
+	cmd := exec.Command(filepath.Join(root, "scripts", "setup.sh"), "--yes")
+	cmd.Env = append(os.Environ(),
+		"CLAUDE_PLUGIN_ROOT="+root,
+		"CLAUDE_PLUGIN_DATA="+asked,
+		"PRAYOPS_RELEASE_BASE_URL="+release(t, goodArchive(t), false),
+	)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+
+	if _, statErr := os.Stat(filepath.Join(asked, "bin", "prayops")); statErr != nil {
+		t.Fatalf("did not install where it was asked: %v\n%s", statErr, out)
+	}
+	if _, statErr := os.Stat(filepath.Join(decoy, "bin", "prayops")); !os.IsNotExist(statErr) {
+		t.Fatalf("installed into an unrelated directory that merely matched the name\n%s", out)
 	}
 }
