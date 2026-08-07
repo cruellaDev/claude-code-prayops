@@ -21,8 +21,6 @@ import (
 // the upper-left quadrant, so a row of them put the left foot outside the
 // pedestal and the middle foot a quarter cell off axis - ▝ ▀ ▘ mirrors.
 var censer = []string{
-	"     ▮ ▮ ▮     ",
-	"     ▮ ▮ ▮     ",
 	"    ▗▄▄▄▄▄▖    ",
 	" ▗▄▟███████▙▄▖ ",
 	" ▝▀▜███████▛▀▘ ",
@@ -33,14 +31,16 @@ var censer = []string{
 // CenserWidth is the width of every row of the censer, in cells.
 const CenserWidth = 15
 
-// emberRow sits on the tips of the incense, above the censer. It is the one
-// warm thing in the scene, so it is the one thing drawn in red.
-const emberRow = 1
+// Ember is the lit tip of a stick of incense - the one warm thing in the
+// scene, and so the one thing drawn in red. Incense is the stick under it.
+const (
+	Ember   = '▪'
+	Incense = '▮'
+)
 
-// Ember is the lit tip of a stick of incense.
-const Ember = '▪'
-
-// smokeRows is how many rows of smoke rise above the embers.
+// smokeRows is the least number of rows of smoke. The sticks burn down into
+// their zone and the smoke takes whatever room they leave, so on a spent
+// context there is more smoke than this and never less.
 //
 // Two, so a puff can visibly climb from one to the other. One row could only
 // change density, which reads as still. Both rows always draw something: the
@@ -52,6 +52,50 @@ const smokeRows = 2
 // smokeColumns are where the sticks stand, so the smoke, the embers and the
 // incense all share one set of columns.
 var smokeColumns = []int{5, 7, 9}
+
+// The incense stands in a zone three rows deep. It burns down through them as
+// the context fills, and the smoke takes the room it leaves - which is what
+// keeps the scene the same height however short the sticks are.
+//
+// Ash heaped in the bowl was tried first. It gauged more finely, fourteen
+// cells against four, and it read as speckle on the object rather than as
+// incense burning down.
+const stickZone = 3
+
+// Stub is what is left standing once a stick has burned away.
+const Stub = '·'
+
+// drawIncense stands the sticks as tall as the context allows, tips them with
+// embers, and leaves stubs when there is nothing left.
+//
+// It returns the row the tops are on, so the smoke knows where to start.
+func drawIncense(g *grid, remaining int) int {
+	// Round up, so a context that is nearly spent still shows a stub of stick
+	// rather than jumping to nothing.
+	height := (remaining*stickZone + 99) / 100
+	if height > stickZone {
+		height = stickZone
+	}
+
+	bottom := smokeRows + stickZone - 1
+	top := bottom - height + 1
+
+	for _, column := range smokeColumns {
+		if height == 0 {
+			g.set(column, bottom, Stub)
+			continue
+		}
+		g.paint(column, top, Ember, ansiEmberLit)
+		for y := top + 1; y <= bottom; y++ {
+			g.set(column, y, Incense)
+		}
+	}
+
+	if height == 0 {
+		return bottom
+	}
+	return top
+}
 
 // PrayerShows is how long after a prayer the emoji keep appearing. The status
 // line refreshes about once a second, so this is also roughly the frame count.
@@ -134,8 +178,7 @@ func Scene(state contracts.SessionState, opts SceneOptions) []string {
 		return nil
 	}
 
-	height := smokeRows + emberRow + len(censer)
-	g := newGrid(columns, height)
+	g := newGrid(columns, SceneHeight())
 
 	// One frame per second. Anything finer would be invisible: the status line
 	// cannot refresh faster than that.
@@ -144,12 +187,10 @@ func Scene(state contracts.SessionState, opts SceneOptions) []string {
 		frame = 0
 	}
 
-	drawSmoke(g, frame, burning(phaseOf(state)))
-	for _, column := range smokeColumns {
-		g.paint(column, smokeRows, Ember, ansiEmberLit)
-	}
+	top := drawIncense(g, fuel(state, opts))
+	drawSmoke(g, top, frame, burning(phaseOf(state)))
 	for i, row := range censer {
-		g.text(0, smokeRows+emberRow+i, row)
+		g.text(0, smokeRows+stickZone+i, row)
 	}
 	drawAura(g, state, opts.Now, frame)
 
@@ -166,28 +207,23 @@ func Scene(state contracts.SessionState, opts SceneOptions) []string {
 // of the eye, on a line the user is trying to type under. They climb instead:
 // which column is high and which is low changes with the frame, so the smoke
 // moves without the shape wandering.
-func drawSmoke(g *grid, frame uint64, active bool) {
-	// Both rows always hold exactly three puffs, on the columns the sticks
-	// stand in. Only the density changes.
-	//
-	// Two earlier versions moved the puffs instead - first onto random rows,
-	// then one column left or right. Both made the plume's footprint change
-	// every second directly above the line the user types on, which is the
-	// complaint that started all of this. Density alone is visible without
-	// anything shifting: nothing to track, nothing to wobble.
+func drawSmoke(g *grid, top int, frame uint64, active bool) {
 	dense := 0.25
 	if active {
 		dense = 0.55
 	}
 
-	for i, column := range smokeColumns {
-		g.set(column, smokeRows-1, '▒')
-
-		glyph := '░'
-		if effect.Hash01(frame, i, 0, "puff") < dense {
-			glyph = '▒'
+	// Every row above the tips, however many that is. A short stick leaves
+	// more room and the plume simply fills it, which is why the scene keeps
+	// its height as the incense burns down.
+	for row := 0; row < top; row++ {
+		for i, column := range smokeColumns {
+			glyph := '░'
+			if effect.Hash01(frame, row*8+i, 0, "puff") < dense {
+				glyph = '▒'
+			}
+			g.set(column, row, glyph)
 		}
-		g.set(column, 0, glyph)
 	}
 }
 
@@ -255,7 +291,7 @@ func drawAura(g *grid, state contracts.SessionState, now time.Time, frame uint64
 		}
 		// Never inside the censer. Filling the gaps between its own glyphs
 		// reads as static on the object rather than an aura around it.
-		if x < CenserWidth && y >= smokeRows+emberRow {
+		if x < CenserWidth && y >= smokeRows+stickZone {
 			continue
 		}
 		if g.cells[y][x] != ' ' {
@@ -431,7 +467,7 @@ func CenserRows() []string { return append([]string(nil), censer...) }
 // SceneHeight is how many rows the scene draws above the status text. A
 // published copy has to match it exactly: comparing only the last rows lets a
 // dropped row slide the whole comparison along and match anyway.
-func SceneHeight() int { return smokeRows + emberRow + len(censer) }
+func SceneHeight() int { return smokeRows + stickZone + len(censer) }
 
 // Indent is exported for the same reason: a published copy of the art has to
 // carry the same leading blanks the status line emits.

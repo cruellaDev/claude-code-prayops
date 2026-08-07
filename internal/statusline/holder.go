@@ -42,12 +42,15 @@ const (
 // luminance band the contrast test enforces, so neither disappears into a
 // terminal's background, whichever one it is.
 const (
-	ansiStick    = "\x1b[38;5;151m"
-	ansiEmberTip = "\x1b[38;5;203m"
+	ansiStick      = "\x1b[38;5;151m"
+	ansiEmberTip   = "\x1b[38;5;203m"
+	ansiSmokeSpent = "\x1b[38;5;244m"
 )
 
-// Ash is what the stick leaves behind as it burns down.
-const Ash = '·'
+// StickAsh is what the stick leaves behind as it burns down. The censer's ash
+// is a different glyph: a heap in a bowl reads as body, a trail on a tray as
+// leftovers.
+const StickAsh = '·'
 
 // HolderScene renders the tray, the stick burned down to wherever the turn has
 // got to, and the status text.
@@ -71,7 +74,18 @@ func HolderScene(state contracts.SessionState, opts SceneOptions) []string {
 		g.text(0, holderSmokeRows+i, row)
 	}
 	tip := drawStick(g, fuel(state, opts))
-	drawStickSmoke(g, tip, frame, burning(phaseOf(state)))
+
+	// A finished turn shows in the smoke: it catches the ember's red when the
+	// work landed and goes grey when it did not. The tray has nowhere to put
+	// hearts or a firework, so its answer is the one thing it already makes.
+	ansi := ""
+	if _, answering := effectAge(state, opts.Now); answering {
+		ansi = ansiSmokeSpent
+		if granted(state) {
+			ansi = ansiEmberTip
+		}
+	}
+	drawStickSmokeTinted(g, tip, frame, burning(phaseOf(state)), ansi)
 
 	return append(g.lines(opts.Color), Render(state, Options{
 		Now: opts.Now, Columns: columns, Color: opts.Color,
@@ -104,7 +118,7 @@ func drawStick(g *grid, remaining int) int {
 		default:
 			// Burnt already. The ash stays put rather than vanishing, so the
 			// stick reads as consumed rather than as never having been there.
-			g.set(x, y, Ash)
+			g.set(x, y, StickAsh)
 		}
 	}
 
@@ -122,6 +136,13 @@ func drawStick(g *grid, remaining int) int {
 // second. The columns are fixed relative to the ember, so within any second it
 // is as still as the others.
 func drawStickSmoke(g *grid, tip int, frame uint64, active bool) {
+	drawStickSmokeTinted(g, tip, frame, active, "")
+}
+
+// drawStickSmokeTinted is the same plume in a colour, which is how the holder
+// answers a finished turn: the smoke catches the ember's red for a moment
+// rather than the tray sprouting hearts it has nowhere to put.
+func drawStickSmokeTinted(g *grid, tip int, frame uint64, active bool, ansi string) {
 	dense := 0.25
 	if active {
 		dense = 0.55
@@ -132,7 +153,7 @@ func drawStickSmoke(g *grid, tip int, frame uint64, active bool) {
 	// the host, and the scene would lose height the moment the incense did.
 	if tip < 0 {
 		for row := 0; row < holderSmokeRows; row++ {
-			g.set(stickStart-1+row, row, '·')
+			g.paint(stickStart-1+row, row, '·', ansi)
 		}
 		return
 	}
@@ -148,7 +169,7 @@ func drawStickSmoke(g *grid, tip int, frame uint64, active bool) {
 			if effect.Hash01(frame, row*8+i, 0, "puff") < dense {
 				glyph = '▒'
 			}
-			g.set(column, row, glyph)
+			g.paint(column, row, glyph, ansi)
 		}
 	}
 }

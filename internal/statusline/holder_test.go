@@ -45,11 +45,11 @@ func TestTheStickIsAsLongAsTheTurnHasLeft(t *testing.T) {
 func TestBurntStickLeavesAsh(t *testing.T) {
 	row := holderScene(t, working(6*time.Minute), now, 60)[holderSmokeRows+stickRow]
 
-	if !strings.ContainsRune(row, Ash) {
+	if !strings.ContainsRune(row, StickAsh) {
 		t.Fatalf("a half burnt stick left no ash: %q", row)
 	}
 	// Ash to the right of what is left, never the other way round.
-	if strings.Index(row, string(Ash)) < strings.LastIndex(row, "▄") {
+	if strings.Index(row, string(StickAsh)) < strings.LastIndex(row, "▄") {
 		t.Fatalf("the ash is on the wrong side of the ember: %q", row)
 	}
 }

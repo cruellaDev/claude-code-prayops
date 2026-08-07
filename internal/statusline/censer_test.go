@@ -31,7 +31,7 @@ func praying(at time.Time) contracts.SessionState {
 func TestSceneDrawsTheCenser(t *testing.T) {
 	lines := scene(t, working(time.Minute), now, 60)
 
-	if len(lines) != smokeRows+emberRow+len(censer)+1 {
+	if len(lines) != SceneHeight()+1 {
 		t.Fatalf("%d rows:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
 
@@ -213,7 +213,7 @@ func TestMotionOffStillsTheScene(t *testing.T) {
 	}
 
 	first := still(now)
-	if len(first) != smokeRows+emberRow+len(censer)+1 {
+	if len(first) != SceneHeight()+1 {
 		t.Fatalf("motion off changed the scene:\n%s", strings.Join(first, "\n"))
 	}
 	if strings.Join(still(now.Add(3*time.Second)), "\n") != strings.Join(first, "\n") {
@@ -285,7 +285,7 @@ func TestTheSceneNeverChangesHeight(t *testing.T) {
 		for second := 0; second < 120; second++ {
 			lines := scene(t, state, now.Add(time.Duration(second)*time.Second), 80)
 
-			if len(lines) != smokeRows+emberRow+len(censer)+1 {
+			if len(lines) != SceneHeight()+1 {
 				t.Fatalf("second %d drew %d rows", second, len(lines))
 			}
 			for y, row := range lines {
@@ -380,5 +380,56 @@ func TestScopeOffHidesTheScene(t *testing.T) {
 	}
 	if width(indent("   ▄▄▄")) != width("   ▄▄▄") {
 		t.Fatalf("indent changed the row's width")
+	}
+}
+
+// The censer has no stick lying on a tray, so its incense burns downward
+// instead - and the smoke takes the room it leaves, which is what keeps the
+// scene the same height however short the sticks get.
+//
+// Ash heaped in the bowl was tried first. It gauged more finely and it read as
+// speckle on the object rather than as incense burning.
+func TestTheIncenseBurnsDownWithTheContext(t *testing.T) {
+	// Ember as well as body: the shortest stick is a lit tip and nothing else,
+	// so counting only the body cannot tell it from a stick that is gone.
+	sticks := func(remaining int) int {
+		opts := SceneOptions{Now: now, Columns: 60, Motion: true, Fuel: &remaining}
+		scene := strings.Join(Scene(working(time.Minute), opts), "")
+		return strings.Count(scene, string(Incense)) + strings.Count(scene, string(Ember))
+	}
+
+	full := sticks(100)
+	if full == 0 {
+		t.Fatal("a fresh censer has no incense standing")
+	}
+
+	last := full + 1
+	for _, remaining := range []int{100, 60, 30, 0} {
+		got := sticks(remaining)
+		if got >= last {
+			t.Fatalf("at %d%% left there are %d cells of stick, at the step before %d", remaining, got, last)
+		}
+		last = got
+	}
+	if last != 0 {
+		t.Fatalf("an exhausted context left %d cells of stick standing", last)
+	}
+}
+
+// Burning down must not shorten the scene. The smoke fills whatever the sticks
+// give up, so the prompt underneath never moves.
+func TestBurningDownKeepsTheHeight(t *testing.T) {
+	for _, remaining := range []int{100, 75, 50, 25, 0} {
+		opts := SceneOptions{Now: now, Columns: 60, Motion: true, Fuel: &remaining}
+		lines := Scene(working(time.Minute), opts)
+
+		if len(lines) != SceneHeight()+1 {
+			t.Fatalf("at %d%% the scene is %d rows, want %d", remaining, len(lines), SceneHeight()+1)
+		}
+		for y, row := range lines {
+			if row == "" {
+				t.Fatalf("at %d%% row %d is blank:\n%s", remaining, y, strings.Join(lines, "\n"))
+			}
+		}
 	}
 }
