@@ -291,6 +291,17 @@ func (g *grid) text(x, y int, s string) {
 	}
 }
 
+// paintText writes a string in one colour, cell by cell, so the escapes never
+// wrap a space the row's indent depends on.
+func (g *grid) paintText(x, y int, s string, ansi string) {
+	for _, r := range s {
+		if r != ' ' {
+			g.paint(x, y, r, ansi)
+		}
+		x += max(narrow.RuneWidth(r), 1)
+	}
+}
+
 // covered marks the second cell of a wide rune.
 const covered rune = 0
 
@@ -315,21 +326,36 @@ func (g *grid) lines(color bool) []string {
 	out := make([]string, 0, len(g.cells))
 	for y, row := range g.cells {
 		var b strings.Builder
+
+		// Runs of one colour open and close once. Per cell would work too, but
+		// the lamp is two dozen cells of the same brass and the status line
+		// redraws every second.
+		open := ""
 		for x, r := range row {
 			if r == covered {
 				continue
 			}
-			ansi, painted := g.tint[y*g.width+x]
-			if painted && color {
-				b.WriteString(ansi)
-				b.WriteRune(r)
-				b.WriteString(ansiReset)
-				continue
+
+			want := ""
+			if color {
+				want = g.tint[y*g.width+x]
+			}
+			if want != open {
+				if open != "" {
+					b.WriteString(ansiReset)
+				}
+				b.WriteString(want)
+				open = want
 			}
 			b.WriteRune(r)
 		}
+		if open != "" {
+			b.WriteString(ansiReset)
+		}
+
 		// Trimming has to ignore the escapes, which never end a row anyway:
-		// only spaces do, and TrimRight sees them plainly.
+		// only spaces do, and a space is never painted, so TrimRight sees them
+		// plainly.
 		out = append(out, indent(strings.TrimRight(b.String(), " ")))
 	}
 	return out

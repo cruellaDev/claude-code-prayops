@@ -51,10 +51,19 @@ const (
 	grantChance = 0.7
 )
 
-// The lamp's own colours: gold when the wish lands, soot when it does not.
+// The lamp's own colours.
+//
+// The lamp is brass, which is what every reference the user picked is made
+// of, and a lamp is not anyone's intellectual property: the story is a few
+// centuries older than any film of it. What would be someone's is a named
+// character or a studio's particular artwork, and neither is here.
+//
+// The body is the duller gold so the granted smoke, a brighter one, still
+// reads as something leaving the lamp rather than more of it.
 const (
-	ansiGold = "\x1b[38;5;220m"
-	ansiSoot = "\x1b[38;5;240m"
+	ansiBrass = "\x1b[38;5;178m"
+	ansiGold  = "\x1b[38;5;220m"
+	ansiSoot  = "\x1b[38;5;240m"
 )
 
 // Rub is the hand on the lamp's belly.
@@ -87,7 +96,7 @@ func LampScene(state contracts.SessionState, opts SceneOptions) []string {
 		drawPlume(g, frame, burning(phaseOf(state)))
 	}
 	for i, row := range lamp {
-		g.text(0, lampSmokeRows+i, row)
+		g.paintText(0, lampSmokeRows+i, row, ansiBrass)
 	}
 
 	label := ""
