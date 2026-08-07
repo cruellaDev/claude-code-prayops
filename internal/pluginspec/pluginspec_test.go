@@ -661,3 +661,83 @@ func TestEnsureRuntimeReplacesAStaleRuntime(t *testing.T) {
 		t.Fatalf("runtime.json still reads %q", raw)
 	}
 }
+
+// An update has to land without restarting the session.
+//
+// Most plugins are markdown and hooks.json, so /plugin update is the whole
+// update. This one carries a binary that has to reach the path the status line
+// runs, and it used to get there only at the next session start - so the
+// update reported success while the old version went on running.
+//
+// The replacement happens from inside the old binary, on the next hook, which
+// is the next tool call.
+func TestAHookReplacesAStaleRuntime(t *testing.T) {
+	root := absPluginRoot(t)
+	data := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(data, "bin"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// A runtime from some older release, standing where the status line looks.
+	stale := filepath.Join(data, "bin", "prayops")
+	build := exec.Command("go", "build", "-ldflags", "-X main.version=0.0.1", "-o", stale, "./cmd/prayops")
+	build.Dir = repoRoot
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+
+	hook := exec.Command(stale, "hook", "claude")
+	hook.Env = append(os.Environ(), "CLAUDE_PLUGIN_ROOT="+root, "CLAUDE_PLUGIN_DATA="+data)
+	hook.Stdin = strings.NewReader(
+		`{"session_id":"s1","cwd":"/x","hook_event_name":"PreToolUse","tool_name":"Bash"}`)
+	if out, err := hook.CombinedOutput(); err != nil || len(out) != 0 {
+		t.Fatalf("hook: %v, output %q", err, out)
+	}
+
+	want := manifestRuntimeVersion(t)
+	out, err := exec.Command(stale, "version").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), want) {
+		t.Fatalf("after one hook the runtime reports %q, want %s", out, want)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(data, "runtime.json"))
+	if err != nil || !strings.Contains(string(raw), want) {
+		t.Fatalf("runtime.json still reads %q", raw)
+	}
+}
+
+// And it must not copy on every hook when there is nothing to replace: this
+// runs on every tool call.
+func TestAHookLeavesACurrentRuntimeAlone(t *testing.T) {
+	root := absPluginRoot(t)
+	data := t.TempDir()
+
+	cmd := exec.Command(filepath.Join(root, "scripts", "ensure-runtime.sh"))
+	cmd.Env = append(os.Environ(), "CLAUDE_PLUGIN_ROOT="+root, "CLAUDE_PLUGIN_DATA="+data)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("ensure-runtime: %v\n%s", err, out)
+	}
+
+	installed := filepath.Join(data, "bin", "prayops")
+	before, err := os.Stat(installed)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+
+	hook := exec.Command(installed, "hook", "claude")
+	hook.Env = append(os.Environ(), "CLAUDE_PLUGIN_ROOT="+root, "CLAUDE_PLUGIN_DATA="+data)
+	hook.Stdin = strings.NewReader(
+		`{"session_id":"s1","cwd":"/x","hook_event_name":"PreToolUse","tool_name":"Bash"}`)
+	if out, err := hook.CombinedOutput(); err != nil {
+		t.Fatalf("hook: %v\n%s", err, out)
+	}
+
+	after, err := os.Stat(installed)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if !before.ModTime().Equal(after.ModTime()) {
+		t.Fatal("a hook rewrote a runtime that was already current")
+	}
+}
