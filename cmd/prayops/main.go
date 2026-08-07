@@ -146,6 +146,31 @@ type statuslineInput struct {
 	Workspace struct {
 		ProjectDir string `json:"project_dir"`
 	} `json:"workspace"`
+
+	// Claude Code reports how much of the context window is left. The incense
+	// burns down by that rather than by a clock: a stick that shortens with
+	// the minutes is decoration, one that shortens with the context is a gauge
+	// - and the number was already on the line pretending to mean something.
+	ContextWindow struct {
+		Remaining *float64 `json:"remaining_percentage"`
+	} `json:"context_window"`
+}
+
+// remaining returns how full the stick is, or nil when the host said nothing -
+// in which case the scene falls back to the clock.
+func (in statuslineInput) remaining() *int {
+	if in.ContextWindow.Remaining == nil {
+		return nil
+	}
+
+	pct := int(*in.ContextWindow.Remaining)
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	return &pct
 }
 
 // project returns the directory the status line was invoked for.
@@ -210,6 +235,7 @@ func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		Color:   os.Getenv("NO_COLOR") == "",
 		Motion:  os.Getenv("NO_COLOR") == "" && os.Getenv("PRAYOPS_MOTION") != "off",
 		Theme:   statusline.ThemeFor(userconfig.LoadTheme(data)),
+		Fuel:    in.remaining(),
 	}
 
 	if lines := statusline.Scene(state, opts); lines != nil {

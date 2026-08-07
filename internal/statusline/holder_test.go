@@ -118,3 +118,34 @@ func TestBurntOutIncenseStopsSmoking(t *testing.T) {
 		}
 	}
 }
+
+// The stick burns by the context window when the host reports one, and by the
+// clock when it does not. The unset case matters: an int field would make
+// "the host said nothing" and "there is nothing left" the same value, and
+// every caller that forgot the field would draw a burnt-out stick.
+func TestTheStickPrefersTheContextWindow(t *testing.T) {
+	sticks := func(opts SceneOptions) int {
+		lines := Scene(working(time.Minute), opts)
+		return strings.Count(lines[holderSmokeRows+stickRow], "▄")
+	}
+
+	base := SceneOptions{Now: now, Columns: 60, Motion: true, Theme: ThemeHolder}
+
+	// Unset: the clock, which after one minute is nearly full.
+	byClock := sticks(base)
+	if byClock < 10 {
+		t.Fatalf("with no context reported the stick is only %d cells", byClock)
+	}
+
+	// A full context is a full stick, which after a minute the clock is not.
+	full, empty := 100, 0
+	base.Fuel = &full
+	if got := sticks(base); got <= byClock {
+		t.Fatalf("a full context gave %d cells, the clock after a minute gave %d", got, byClock)
+	}
+
+	base.Fuel = &empty
+	if got := sticks(base); got != 0 {
+		t.Fatalf("an exhausted context left %d cells of stick", got)
+	}
+}

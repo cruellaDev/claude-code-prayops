@@ -1,8 +1,6 @@
 package statusline
 
 import (
-	"time"
-
 	"github.com/cruellaDev/claude-code-prayops/contracts"
 	"github.com/cruellaDev/claude-code-prayops/internal/effect"
 )
@@ -72,7 +70,7 @@ func HolderScene(state contracts.SessionState, opts SceneOptions) []string {
 	for i, row := range holder {
 		g.text(0, holderSmokeRows+i, row)
 	}
-	tip := drawStick(g, state, opts.Now)
+	tip := drawStick(g, fuel(state, opts))
 	drawStickSmoke(g, tip, frame, burning(phaseOf(state)))
 
 	return append(g.lines(opts.Color), Render(state, Options{
@@ -90,10 +88,11 @@ func HolderRows() []string { return append([]string(nil), holder...) }
 // of the turn, and returns the column the lit end is at.
 //
 // It burns from the far end towards the hook, which is the direction a stick
-// in a holder actually burns, and leaves ash where it has been.
-func drawStick(g *grid, state contracts.SessionState, now time.Time) int {
+// in a holder actually burns, and leaves ash where it has been. What it burns
+// by is the context window: the stick is a gauge, not a timer.
+func drawStick(g *grid, remaining int) int {
 	length := stickEnd - stickStart + 1
-	left := Remaining(state, now) * length / 100
+	left := remaining * length / 100
 
 	y := holderSmokeRows + stickRow
 	for x := stickStart; x <= stickEnd; x++ {

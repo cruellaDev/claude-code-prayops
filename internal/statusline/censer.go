@@ -93,6 +93,22 @@ type SceneOptions struct {
 	Color   bool
 	Motion  bool
 	Theme   Theme
+
+	// Fuel is how much of the context window is left, 0 to 100. Nil means the
+	// host did not say, and nil is the zero value on purpose: an int would
+	// make "unset" and "empty" the same thing, and every caller that forgot
+	// the field would draw a stick that had already burned away.
+	Fuel *int
+}
+
+// fuel resolves the gauge, falling back to the clock when the host reported
+// nothing. Without the fallback a host that sends no context figure would
+// leave every stick full for ever.
+func fuel(state contracts.SessionState, opts SceneOptions) int {
+	if opts.Fuel != nil {
+		return *opts.Fuel
+	}
+	return Remaining(state, opts.Now)
 }
 
 // Scene renders the censer, its smoke, any prayers, and the status text.

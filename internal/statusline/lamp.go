@@ -99,10 +99,26 @@ var burstSpokes = [][2]int{
 	{-1, -1}, {1, -1}, {0, -2},
 }
 
+// lampBodyRows lists the rows that hold oil, bottom first. The lamp fills from
+// the foot up, so the gold has a waterline rather than a scatter.
+var lampBodyRows = []int{6, 5, 4, 3, 2, 1}
+
 // shadeFor picks the outline for an edge and the fill for the inside.
-func shadeFor(r rune) string {
-	if r == '█' {
-		return ansiLampFill
+//
+// The inside is only gold as far up as the oil goes. Above the waterline the
+// cell is left unpainted, which is plain metal in whatever colour the terminal
+// draws its text - the lamp keeps its shape and loses its shine, which is what
+// a lamp running out of oil looks like.
+func shadeFor(r rune, row, remaining int) string {
+	if r != '█' {
+		return ansiLampOutline
+	}
+
+	filled := remaining * len(lampBodyRows) / 100
+	for _, lit := range lampBodyRows[:filled] {
+		if lit == row {
+			return ansiLampFill
+		}
 	}
 	return ansiLampOutline
 }
@@ -133,11 +149,12 @@ func LampScene(state contracts.SessionState, opts SceneOptions) []string {
 	if !wishing {
 		drawPlume(g, frame, burning(phaseOf(state)))
 	}
+	oil := fuel(state, opts)
 	for i, row := range lamp {
 		x := 0
 		for _, r := range row {
 			if r != ' ' {
-				g.paint(x, lampSmokeRows+i, r, shadeFor(r))
+				g.paint(x, lampSmokeRows+i, r, shadeFor(r, i, oil))
 			}
 			x++
 		}
