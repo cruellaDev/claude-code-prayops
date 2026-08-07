@@ -61,10 +61,44 @@ const (
 // The body is the duller gold so the granted smoke, a brighter one, still
 // reads as something leaving the lamp rather than more of it.
 const (
-	ansiBrass = "\x1b[38;5;178m"
-	ansiGold  = "\x1b[38;5;220m"
-	ansiSoot  = "\x1b[38;5;240m"
+	ansiGold = "\x1b[38;5;220m"
+	ansiSoot = "\x1b[38;5;240m"
 )
+
+// brass is a ramp rather than one colour, so the lamp reads as a round object
+// instead of a flat cut-out. Light comes from the upper left, which is where
+// it comes from in every one of the references.
+var brass = []string{
+	"\x1b[38;5;229m", // 0 lit edge
+	"\x1b[38;5;221m", // 1
+	"\x1b[38;5;178m", // 2 the body's own colour
+	"\x1b[38;5;136m", // 3
+	"\x1b[38;5;94m",  // 4 deep shadow
+}
+
+// shadeFor picks a step of the ramp for one cell of the lamp.
+//
+// Two gradients at once: down the rows, because the top faces the light, and
+// across the columns, because the spout recedes to the right. A single
+// vertical ramp made it look like a stack of bars rather than a lamp.
+func shadeFor(row, column int) string {
+	shade := []int{0, 1, 1, 2, 3, 3, 2}[row]
+
+	switch {
+	case column < 12:
+		shade--
+	case column > 18:
+		shade++
+	}
+
+	if shade < 0 {
+		shade = 0
+	}
+	if shade >= len(brass) {
+		shade = len(brass) - 1
+	}
+	return brass[shade]
+}
 
 // Rub is the hand on the lamp's belly.
 const Rub = "✋"
@@ -96,7 +130,13 @@ func LampScene(state contracts.SessionState, opts SceneOptions) []string {
 		drawPlume(g, frame, burning(phaseOf(state)))
 	}
 	for i, row := range lamp {
-		g.paintText(0, lampSmokeRows+i, row, ansiBrass)
+		x := 0
+		for _, r := range row {
+			if r != ' ' {
+				g.paint(x, lampSmokeRows+i, r, shadeFor(i, x))
+			}
+			x++
+		}
 	}
 
 	label := ""
