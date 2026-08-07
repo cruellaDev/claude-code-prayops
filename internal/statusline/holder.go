@@ -47,11 +47,6 @@ const (
 	ansiSmokeSpent = "\x1b[38;5;244m"
 )
 
-// StickAsh is what the stick leaves behind as it burns down. The censer's ash
-// is a different glyph: a heap in a bowl reads as body, a trail on a tray as
-// leftovers.
-const StickAsh = '·'
-
 // HolderScene renders the tray, the stick burned down to wherever the turn has
 // got to, and the status text.
 func HolderScene(state contracts.SessionState, opts SceneOptions) []string {
@@ -115,11 +110,10 @@ func drawStick(g *grid, remaining int) int {
 			g.paint(x, y, '▄', ansiStick)
 		case x == stickStart+left-1:
 			g.paint(x, y, '▄', ansiEmberTip)
-		default:
-			// Burnt already. The ash stays put rather than vanishing, so the
-			// stick reads as consumed rather than as never having been there.
-			g.set(x, y, StickAsh)
 		}
+		// Past the ember there is nothing. A trail of ash was left there for a
+		// while and it read as a dotted line drawn on the tray, not as
+		// something burnt.
 	}
 
 	if left <= 0 {

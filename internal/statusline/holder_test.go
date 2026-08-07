@@ -40,17 +40,27 @@ func TestTheStickIsAsLongAsTheTurnHasLeft(t *testing.T) {
 	}
 }
 
-// What it burns away it leaves behind, so the picture says "this has been
-// going a while" rather than "there is a short stick here".
-func TestBurntStickLeavesAsh(t *testing.T) {
+// Past the ember there is nothing. A trail of ash was left there for a while
+// and it read as a dotted line drawn on the tray rather than as something
+// burnt away.
+func TestNothingIsLeftPastTheEmber(t *testing.T) {
 	row := holderScene(t, working(6*time.Minute), now, 60)[holderSmokeRows+stickRow]
 
-	if !strings.ContainsRune(row, StickAsh) {
-		t.Fatalf("a half burnt stick left no ash: %q", row)
+	runes := []rune(row)
+	ember := -1
+	for i, r := range runes {
+		if r == '▄' {
+			ember = i
+		}
 	}
-	// Ash to the right of what is left, never the other way round.
-	if strings.Index(row, string(StickAsh)) < strings.LastIndex(row, "▄") {
-		t.Fatalf("the ash is on the wrong side of the ember: %q", row)
+	if ember < 0 {
+		t.Fatalf("a half burnt stick has no ember: %q", row)
+	}
+
+	for i := ember + 1; i < len(runes); i++ {
+		if runes[i] != ' ' {
+			t.Fatalf("column %d past the ember holds %q: %s", i, runes[i], row)
+		}
 	}
 }
 
