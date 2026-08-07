@@ -167,6 +167,8 @@ func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 			return runStatuslineConfig(args, stdout, stderr)
 		case "scope":
 			return runStatuslineScope(args[1:], stdout, stderr)
+		case "theme":
+			return runStatuslineTheme(args[1:], stdout, stderr)
 		}
 	}
 
@@ -207,6 +209,7 @@ func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		Columns: terminalColumns(),
 		Color:   os.Getenv("NO_COLOR") == "",
 		Motion:  os.Getenv("NO_COLOR") == "" && os.Getenv("PRAYOPS_MOTION") != "off",
+		Theme:   statusline.ThemeFor(userconfig.LoadTheme(data)),
 	}
 
 	if lines := statusline.Scene(state, opts); lines != nil {
@@ -220,6 +223,34 @@ func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	fmt.Fprintln(stdout, statusline.Render(state, statusline.Options{
 		Now: opts.Now, Columns: opts.Columns, Color: opts.Color,
 	}))
+	return 0
+}
+
+// runStatuslineTheme reports or changes which picture the status line draws.
+func runStatuslineTheme(args []string, stdout, stderr io.Writer) int {
+	data := pluginDataDir()
+	if data == "" {
+		fmt.Fprintln(stderr, "prayops: CLAUDE_PLUGIN_DATA is not set")
+		return 1
+	}
+
+	current := statusline.ThemeFor(userconfig.LoadTheme(data))
+	if len(args) == 0 {
+		fmt.Fprintf(stdout, "The status line draws the %s.\nChoose with: statusline theme censer | lamp\n", current)
+		return 0
+	}
+
+	chosen := statusline.Theme(args[0])
+	if chosen != statusline.ThemeCenser && chosen != statusline.ThemeLamp {
+		fmt.Fprintf(stderr, "prayops: no theme called %q. There are two: censer, lamp\n", args[0])
+		return 2
+	}
+
+	if err := userconfig.SaveTheme(data, string(chosen)); err != nil {
+		fmt.Fprintf(stderr, "prayops: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "The status line draws the %s now.\n", chosen)
 	return 0
 }
 

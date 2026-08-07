@@ -64,12 +64,33 @@ const PrayerShows = 5 * time.Second
 // like a lot of them, not a polite few.
 const MaxPrayers = 44
 
+// Theme names the picture the status line draws.
+type Theme string
+
+const (
+	// ThemeCenser is the incense burner: prayers pile onto it as offerings.
+	ThemeCenser Theme = "censer"
+	// ThemeLamp is the genie lamp: a prayer rubs it, and the wish either
+	// works or coughs soot.
+	ThemeLamp Theme = "lamp"
+)
+
+// ThemeFor resolves a stored name, falling back to the censer so an unknown
+// or empty value draws something rather than nothing.
+func ThemeFor(name string) Theme {
+	if Theme(name) == ThemeLamp {
+		return ThemeLamp
+	}
+	return ThemeCenser
+}
+
 // SceneOptions control one rendered scene.
 type SceneOptions struct {
 	Now     time.Time
 	Columns int
 	Color   bool
 	Motion  bool
+	Theme   Theme
 }
 
 // Scene renders the censer, its smoke, any prayers, and the status text.
@@ -78,6 +99,10 @@ type SceneOptions struct {
 // the same picture, which keeps the status line from flickering between two
 // refreshes that happen to land close together.
 func Scene(state contracts.SessionState, opts SceneOptions) []string {
+	if opts.Theme == ThemeLamp {
+		return LampScene(state, opts)
+	}
+
 	columns := opts.Columns
 	if columns <= 0 {
 		columns = DefaultColumns
@@ -100,7 +125,7 @@ func Scene(state contracts.SessionState, opts SceneOptions) []string {
 
 	drawSmoke(g, frame, burning(phaseOf(state)))
 	for _, column := range smokeColumns {
-		g.set(column, smokeRows, Ember)
+		g.paint(column, smokeRows, Ember, ansiEmberLit)
 	}
 	for i, row := range censer {
 		g.text(0, smokeRows+emberRow+i, row)
@@ -220,10 +245,15 @@ const prayerCells = 2
 type grid struct {
 	cells [][]rune
 	width int
+
+	// tint colours individual cells. A whole row cannot be wrapped: the ember
+	// is red and the censer beneath it is not, and the lamp's smoke changes
+	// colour while the lamp does not.
+	tint map[int]string
 }
 
 func newGrid(width, height int) *grid {
-	g := &grid{width: width, cells: make([][]rune, height)}
+	g := &grid{width: width, cells: make([][]rune, height), tint: map[int]string{}}
 	for y := range g.cells {
 		g.cells[y] = make([]rune, width)
 		for x := range g.cells[y] {
@@ -238,6 +268,15 @@ func (g *grid) set(x, y int, r rune) {
 		return
 	}
 	g.cells[y][x] = r
+}
+
+// paint sets a cell and the colour it is drawn in.
+func (g *grid) paint(x, y int, r rune, ansi string) {
+	if y < 0 || y >= len(g.cells) || x < 0 || x >= g.width {
+		return
+	}
+	g.cells[y][x] = r
+	g.tint[y*g.width+x] = ansi
 }
 
 // text writes a string, advancing by each rune's display width. The second
@@ -269,23 +308,25 @@ func (g *grid) free(x, y, width int) bool {
 	return true
 }
 
-// lines renders the grid. The ember is the one cell that carries its own
-// colour, so the escape is written around that rune alone rather than around
-// the row - anything wider would tint the censer too.
+// lines renders the grid. Colour is written around single cells rather than
+// around a row: the ember is red while the censer under it is not, and the
+// lamp's smoke changes colour while the lamp does not.
 func (g *grid) lines(color bool) []string {
 	out := make([]string, 0, len(g.cells))
-	for _, row := range g.cells {
+	for y, row := range g.cells {
 		var b strings.Builder
-		for _, r := range row {
-			switch {
-			case r == covered:
-			case r == Ember && color:
-				b.WriteString(ansiEmberLit)
+		for x, r := range row {
+			if r == covered {
+				continue
+			}
+			ansi, painted := g.tint[y*g.width+x]
+			if painted && color {
+				b.WriteString(ansi)
 				b.WriteRune(r)
 				b.WriteString(ansiReset)
-			default:
-				b.WriteRune(r)
+				continue
 			}
+			b.WriteRune(r)
 		}
 		// Trimming has to ignore the escapes, which never end a row anyway:
 		// only spaces do, and TrimRight sees them plainly.
