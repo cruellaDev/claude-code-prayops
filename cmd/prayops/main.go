@@ -236,13 +236,15 @@ func runStatuslineTheme(args []string, stdout, stderr io.Writer) int {
 
 	current := statusline.ThemeFor(userconfig.LoadTheme(data))
 	if len(args) == 0 {
-		fmt.Fprintf(stdout, "The status line draws the %s.\nChoose with: statusline theme censer | lamp\n", current)
+		fmt.Fprintf(stdout, "The status line draws the %s.\nChoose with: statusline theme censer | lamp | holder\n", current)
 		return 0
 	}
 
 	chosen := statusline.Theme(args[0])
-	if chosen != statusline.ThemeCenser && chosen != statusline.ThemeLamp {
-		fmt.Fprintf(stderr, "prayops: no theme called %q. There are two: censer, lamp\n", args[0])
+	switch chosen {
+	case statusline.ThemeCenser, statusline.ThemeLamp, statusline.ThemeHolder:
+	default:
+		fmt.Fprintf(stderr, "prayops: no theme called %q. There are three: censer, lamp, holder\n", args[0])
 		return 2
 	}
 

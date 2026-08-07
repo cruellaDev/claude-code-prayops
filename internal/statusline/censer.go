@@ -53,16 +53,12 @@ const smokeRows = 2
 // incense all share one set of columns.
 var smokeColumns = []int{5, 7, 9}
 
-// Prayer is the emoji a prayer appears as.
-const Prayer = "🙏"
-
 // PrayerShows is how long after a prayer the emoji keep appearing. The status
 // line refreshes about once a second, so this is also roughly the frame count.
 const PrayerShows = 5 * time.Second
 
-// MaxPrayers is how many emoji can be on screen at once. A prayer should feel
-// like a lot of them, not a polite few.
-const MaxPrayers = 44
+// MaxAura is how many cells of light or shade can be on screen at once.
+const MaxAura = 16
 
 // Theme names the picture the status line draws.
 type Theme string
@@ -73,13 +69,19 @@ const (
 	// ThemeLamp is the genie lamp: a prayer rubs it, and the wish either
 	// works or coughs soot.
 	ThemeLamp Theme = "lamp"
+	// ThemeHolder is the incense stick holder: the stick burns down as the
+	// turn runs, so the picture reports rather than decorates.
+	ThemeHolder Theme = "holder"
 )
 
 // ThemeFor resolves a stored name, falling back to the censer so an unknown
 // or empty value draws something rather than nothing.
 func ThemeFor(name string) Theme {
-	if Theme(name) == ThemeLamp {
+	switch Theme(name) {
+	case ThemeLamp:
 		return ThemeLamp
+	case ThemeHolder:
+		return ThemeHolder
 	}
 	return ThemeCenser
 }
@@ -99,8 +101,11 @@ type SceneOptions struct {
 // the same picture, which keeps the status line from flickering between two
 // refreshes that happen to land close together.
 func Scene(state contracts.SessionState, opts SceneOptions) []string {
-	if opts.Theme == ThemeLamp {
+	switch opts.Theme {
+	case ThemeLamp:
 		return LampScene(state, opts)
+	case ThemeHolder:
+		return HolderScene(state, opts)
 	}
 
 	columns := opts.Columns
@@ -130,7 +135,7 @@ func Scene(state contracts.SessionState, opts SceneOptions) []string {
 	for i, row := range censer {
 		g.text(0, smokeRows+emberRow+i, row)
 	}
-	drawPrayers(g, state, opts.Now, columns)
+	drawAura(g, state, opts.Now, frame)
 
 	lines := g.lines(opts.Color)
 	return append(lines, Render(state, Options{
@@ -170,76 +175,82 @@ func drawSmoke(g *grid, frame uint64, active bool) {
 	}
 }
 
-// drawPrayers throws the emoji out of the censer and lets them fly.
+// Light and shade, rather than a crowd of emoji.
 //
-// The trick is that the seed is the prayer, not the frame. Each emoji keeps
-// its own direction and speed for the whole five seconds, so it travels
-// outward frame by frame instead of teleporting to a fresh random spot every
-// refresh - a cloud of dots that merely rearranges reads as noise, while the
-// same dots moving away from a point read as a burst.
+// The burst used to be prayer emoji flying outward. It read as confetti: busy,
+// and it said the same thing whatever had happened. Light and shade say which
+// it was without a word - and they carry it in weight as well as in colour, so
+// they still read on a terminal whose palette is nothing like this one.
+const (
+	ansiHalo  = "\x1b[38;5;222m"
+	ansiShade = "\x1b[38;5;240m"
+)
+
+// Halo is the light a finished turn throws around the censer; Shade is what a
+// failed one leaves.
 //
-// They land anywhere, the censer included. Reserving its block kept the
-// drawing tidy and made the burst look fenced off; offerings piling onto the
-// censer is the point.
-func drawPrayers(g *grid, state contracts.SessionState, now time.Time, columns int) {
-	if state.LastPrayerAt.IsZero() {
+// Neither set may borrow a glyph from the smoke. The first version used ░ for
+// light and ▒ for shade, which are exactly what the incense is already making
+// - so the two were told apart by colour alone, and on a terminal with a
+// different palette they were not told apart at all.
+var (
+	haloGlyphs  = []rune{'·', '˚'}
+	shadeGlyphs = []rune{'▓', '▚'}
+)
+
+// drawAura surrounds the censer with light or with shadow.
+//
+// Light spreads: it starts close and travels outward, thinning as it goes.
+// Shade does the opposite - it presses in around the censer and stays there,
+// which is what makes the two obvious at a glance even in one frame.
+func drawAura(g *grid, state contracts.SessionState, now time.Time, frame uint64) {
+	elapsed, active := effectAge(state, now)
+	if !active {
 		return
 	}
-	// Whole seconds, not the exact age: Claude Code re-runs the status line on
-	// events as well as on its timer, and a position derived from a fractional
-	// age would redraw a different picture twice within the same second.
-	elapsed := now.Unix() - state.LastPrayerAt.Unix()
+
 	shows := int64(PrayerShows / time.Second)
-	if elapsed < 0 || elapsed >= shows {
-		return
+	progress := float64(elapsed) / float64(shows)
+	good := granted(state)
+
+	count := int(float64(MaxAura)*(1-progress)) + 1
+	glyphs := shadeGlyphs
+	ansi := ansiShade
+	if good {
+		glyphs = haloGlyphs
+		ansi = ansiHalo
 	}
 
-	// One burst, one seed. Two prayers a second apart throw different sprays.
-	seed := uint64(state.LastPrayerAt.Unix())
-	age := float64(elapsed)
-	progress := (age + 1) / float64(shows)
+	placed := 0
+	for attempt := 0; attempt < 400 && placed < count; attempt++ {
+		y := int(effect.Hash01(frame, attempt, placed, "auraY") * float64(len(g.cells)))
 
-	rows := len(g.cells)
-	taken := make(map[int]bool, MaxPrayers*2)
+		// Light travels outward as it goes; shade never leaves the censer.
+		// Both start against the censer. Light then reaches further out every
+		// second; shade never does.
+		far := CenserWidth + 8
+		if good {
+			far = CenserWidth + 8 + int(progress*float64(g.width-CenserWidth))
+		}
+		x := int(effect.Hash01(frame, attempt, placed, "auraX") * float64(far))
 
-	for i := 0; i < MaxPrayers; i++ {
-		// Each one burns out at its own moment, so the crowd thins unevenly
-		// instead of all of them stepping back together.
-		if age > 1+effect.Hash01(seed, i, 0, "life")*float64(shows-1) {
+		if x < 0 || x >= g.width || y < 0 || y >= len(g.cells) {
+			continue
+		}
+		// Never inside the censer. Filling the gaps between its own glyphs
+		// reads as static on the object rather than an aura around it.
+		if x < CenserWidth && y >= smokeRows+emberRow {
+			continue
+		}
+		if g.cells[y][x] != ' ' {
 			continue
 		}
 
-		// The scene is six rows and most of a terminal across, so the travel
-		// that reads as a burst is sideways. Vertically they only drift up a
-		// row or so; anything more flies out of the top and is simply lost.
-		reach := effect.Hash01(seed, i, 1, "reach") * float64(columns-CenserWidth)
-		if effect.Hash01(seed, i, 2, "side") < 0.35 {
-			reach = -reach / 3 // a few go the other way, past the censer
-		}
-
-		x := int(float64(CenserWidth)/2 + reach*progress)
-		y := int(effect.Hash01(seed, i, 3, "row")*float64(rows) - age/2)
-		if y < 0 {
-			y = 0
-		}
-
-		if x < 0 || y >= rows || x+prayerCells > g.width {
-			continue
-		}
-		// Two emoji in the same place would leave half a glyph behind, so
-		// prayers give way to each other - and to nothing else.
-		if taken[y*g.width+x] || taken[y*g.width+x+1] {
-			continue
-		}
-
-		g.text(x, y, Prayer)
-		taken[y*g.width+x] = true
-		taken[y*g.width+x+1] = true
+		glyph := glyphs[int(effect.Hash01(frame, attempt, placed, "auraG")*float64(len(glyphs)))]
+		g.paint(x, y, glyph, ansi)
+		placed++
 	}
 }
-
-// prayerCells is how many terminal cells the prayer emoji occupies.
-const prayerCells = 2
 
 // grid is a fixed block of cells the scene is composed into.
 type grid struct {
@@ -336,6 +347,8 @@ func (g *grid) lines(color bool) []string {
 				continue
 			}
 
+			// An unpainted cell keeps the terminal's own foreground, which is
+			// the only colour guaranteed to contrast with its background.
 			want := ""
 			if color {
 				want = g.tint[y*g.width+x]

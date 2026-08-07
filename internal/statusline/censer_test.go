@@ -96,84 +96,94 @@ func TestSceneDeclinesWhenTooNarrow(t *testing.T) {
 	}
 }
 
-// A prayer should feel like a lot of them.
-func TestPrayerFillsTheScene(t *testing.T) {
-	lines := scene(t, praying(now), now, 60)
-	count := strings.Count(strings.Join(lines, "\n"), Prayer)
+// aura counts the cells of light or shade in a scene.
+//
+// The last line is the status text, which is not the picture - and it carries
+// a middle dot as its separator, which is also one of the halo's glyphs.
+func aura(lines []string) int {
+	joined := strings.Join(lines[:len(lines)-1], "")
 
-	if count < 10 {
-		t.Fatalf("only %d prayers:\n%s", count, strings.Join(lines, "\n"))
+	total := 0
+	for _, set := range [][]rune{haloGlyphs, shadeGlyphs} {
+		for _, glyph := range set {
+			total += strings.Count(joined, string(glyph))
+		}
 	}
-	if count > MaxPrayers+1 {
-		t.Fatalf("%d prayers, over the cap of %d", count, MaxPrayers)
+	return total
+}
+
+func finished(phase contracts.SessionPhase) contracts.SessionState {
+	state := working(time.Minute)
+	state.Phase = phase
+	state.UpdatedAt = now
+	return state
+}
+
+// The censer answers with light or with shadow, and the two look nothing
+// alike. It used to answer with a crowd of prayer emoji, which said the same
+// thing whatever had happened.
+func TestLightAndShadeLookNothingAlike(t *testing.T) {
+	light := strings.Join(scene(t, finished(contracts.PhaseTurnCompleted), now, 80), "")
+	dark := strings.Join(scene(t, finished(contracts.PhaseTurnFailed), now, 80), "")
+
+	if !strings.ContainsAny(light, string(haloGlyphs)) {
+		t.Fatalf("a finished turn threw no light:\n%s", light)
+	}
+	if strings.Contains(light, string(shadeGlyphs[1])) {
+		t.Fatalf("a finished turn threw shade:\n%s", light)
+	}
+	if !strings.ContainsAny(dark, string(shadeGlyphs)) {
+		t.Fatalf("a failed turn threw no shade:\n%s", dark)
 	}
 }
 
-// They thin out rather than vanishing all at once, and they do stop.
-func TestPrayersThinOutAndStop(t *testing.T) {
-	count := func(after time.Duration) int {
-		return strings.Count(strings.Join(scene(t, praying(now), now.Add(after), 60), "\n"), Prayer)
+// Light travels outward; shade stays around the censer. That difference is
+// what makes the two readable in a single frame.
+func TestLightTravelsAndShadeDoesNot(t *testing.T) {
+	widest := func(state contracts.SessionState, second int) int {
+		lines := scene(t, state, now.Add(time.Duration(second)*time.Second), 120)
+
+		far := 0
+		for _, row := range lines[:len(lines)-1] {
+			for x, r := range []rune(row) {
+				for _, set := range [][]rune{haloGlyphs, shadeGlyphs} {
+					for _, glyph := range set {
+						if r == glyph && x > far {
+							far = x
+						}
+					}
+				}
+			}
+		}
+		return far
 	}
+
+	good := finished(contracts.PhaseTurnCompleted)
+	bad := finished(contracts.PhaseTurnFailed)
+
+	if !(widest(good, 3) > widest(good, 0)) {
+		t.Fatalf("the light did not travel: %d then %d", widest(good, 0), widest(good, 3))
+	}
+	if got := widest(bad, 3); got > CenserWidth+8 {
+		t.Fatalf("the shade wandered off to column %d", got)
+	}
+}
+
+// It thins out rather than vanishing all at once, and it does stop.
+func TestTheAuraThinsOutAndStops(t *testing.T) {
+	state := finished(contracts.PhaseTurnCompleted)
+	count := func(after time.Duration) int { return aura(scene(t, state, now.Add(after), 60)) }
 
 	start := count(0)
 	middle := count(PrayerShows / 2)
 	if !(start > middle) {
-		t.Fatalf("prayers did not thin out: %d then %d", start, middle)
+		t.Fatalf("the aura did not thin out: %d then %d", start, middle)
 	}
 	if middle == 0 {
-		t.Fatal("prayers vanished halfway through")
+		t.Fatal("the aura vanished halfway through")
 	}
 	if got := count(PrayerShows); got != 0 {
-		t.Fatalf("%d prayers still showing after the effect ended", got)
-	}
-	if got := count(-time.Second); got != 0 {
-		t.Fatalf("%d prayers showing before the prayer was sent", got)
-	}
-}
-
-// Offerings pile onto the censer. Reserving its block made the burst look
-// fenced off, which is the opposite of what a burst is.
-func TestPrayersMayLandOnTheCenser(t *testing.T) {
-	landed := false
-	for second := 0; second < int(PrayerShows/time.Second) && !landed; second++ {
-		lines := scene(t, praying(now), now.Add(time.Duration(second)*time.Second), 60)
-
-		for y, row := range lines[:len(lines)-1] {
-			if y < smokeRows {
-				continue
-			}
-			head := []rune(row)
-			if len(head) > CenserWidth {
-				head = head[:CenserWidth]
-			}
-			if strings.Contains(string(head), Prayer) {
-				landed = true
-				break
-			}
-		}
-	}
-	if !landed {
-		t.Fatal("no prayer ever reached the censer")
-	}
-}
-
-// The burst travels. If every refresh drew a fresh random spread instead, the
-// emoji would rearrange without ever going anywhere.
-func TestPrayersTravelOutward(t *testing.T) {
-	spread := func(second int) int {
-		lines := scene(t, praying(now), now.Add(time.Duration(second)*time.Second), 120)
-
-		widest := 0
-		for _, row := range lines[:len(lines)-1] {
-			if i := strings.LastIndex(row, Prayer); i > widest {
-				widest = i
-			}
-		}
-		return widest
-	}
-
-	if !(spread(2) > spread(0)) {
-		t.Fatalf("the burst did not travel: %d cells then %d", spread(0), spread(2))
+		t.Fatalf("%d cells of aura still showing after the effect ended", got)
 	}
 }
 

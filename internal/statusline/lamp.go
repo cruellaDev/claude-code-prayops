@@ -26,8 +26,7 @@ var lamp = []string{
 // LampWidth is the width of every row of the lamp, in cells.
 const LampWidth = 27
 
-// lampSmokeRows is how many rows rise above the spout. Three, because the
-// wish's smoke has to zigzag and one row cannot show a zigzag.
+// lampSmokeRows is how many rows rise above the spout.
 const lampSmokeRows = 3
 
 // spoutTip is the column the smoke leaves from - the lifted end of the spout.
@@ -45,63 +44,68 @@ var lampPlume = [][]int{
 	{spoutTip},
 }
 
-// A wish takes a moment to work, and then either works or does not.
+// A wish either works or it does not, and it says so at once.
+//
+// A hand rubbed the belly for the first two seconds at one point. It read as a
+// loading bar in front of the thing the user asked for, so it is gone.
+const grantChance = 0.7
+
+// The lamp is drawn the way the cartoon reference is: an outline holding the
+// shape, and flat gold inside it.
+//
+// The art separates the two by itself: a full block is inside the lamp, and
+// every partial block - the quadrants and half blocks - is an edge of it.
+//
+// The outline is left uncoloured on purpose. Nearly half the lamp's cells are
+// edges - the whole spout, the handle, the foot - so whatever colour they get,
+// the object mostly is that colour: brown made it look like a chestnut, and
+// near black made it vanish on a dark background. Unpainted, it takes the
+// terminal's own foreground, which contrasts with the terminal's own
+// background by definition. That is why the censer has always looked right in
+// both.
+//
+// The fill was shaded for a while, in five steps and then three. Neither read:
+// twenty-seven cells across, one face of the body is five or six cells, so the
+// steps land a cell each and the gradient becomes a smudge.
 const (
-	rubSeconds  = 2
-	grantChance = 0.7
+	ansiLampOutline = ""
+	ansiLampFill    = "\x1b[38;5;220m"
 )
 
-// The lamp's own colours.
+// A wish that lands rises as hearts; one that does not goes off like a
+// firework that misfired inside the lamp.
 //
-// The lamp is brass, which is what every reference the user picked is made
-// of, and a lamp is not anyone's intellectual property: the story is a few
-// centuries older than any film of it. What would be someone's is a named
-// character or a studio's particular artwork, and neither is here.
-//
-// The body is the duller gold so the granted smoke, a brighter one, still
-// reads as something leaving the lamp rather than more of it.
+// The hearts are red, which is red on any background. The sparks are left
+// unpainted, for the same reason the outline is: a fixed dark grey is soot on
+// a pale terminal and nearly invisible on a dark one. Unpainted they take the
+// terminal's own foreground - black sparks on a light background, bright ones
+// on a dark background, which is what a firework looks like at night anyway.
 const (
-	ansiGold = "\x1b[38;5;220m"
-	ansiSoot = "\x1b[38;5;240m"
+	ansiHeart = "\x1b[38;5;203m"
+	ansiSoot  = ""
 )
 
-// brass is a ramp rather than one colour, so the lamp reads as a round object
-// instead of a flat cut-out. Light comes from the upper left, which is where
-// it comes from in every one of the references.
-var brass = []string{
-	"\x1b[38;5;229m", // 0 lit edge
-	"\x1b[38;5;221m", // 1
-	"\x1b[38;5;178m", // 2 the body's own colour
-	"\x1b[38;5;136m", // 3
-	"\x1b[38;5;94m",  // 4 deep shadow
+// Heart is what a granted wish rises as.
+const Heart = '♥'
+
+// Spark is one ember of the firework a failed wish throws.
+const Spark = '▪'
+
+// burstSpokes are the directions the firework throws its sparks. Up and out
+// only: the rows below belong to the lamp.
+var burstSpokes = [][2]int{
+	{-3, 0}, {3, 0},
+	{-2, -1}, {2, -1}, {0, -1},
+	{-1, -1}, {1, -1}, {0, -2},
 }
 
-// shadeFor picks a step of the ramp for one cell of the lamp.
-//
-// Two gradients at once: down the rows, because the top faces the light, and
-// across the columns, because the spout recedes to the right. A single
-// vertical ramp made it look like a stack of bars rather than a lamp.
-func shadeFor(row, column int) string {
-	shade := []int{0, 1, 1, 2, 3, 3, 2}[row]
-
-	switch {
-	case column < 12:
-		shade--
-	case column > 18:
-		shade++
+// shadeFor picks the outline for an edge and the fill for the inside.
+func shadeFor(r rune) string {
+	if r == '█' {
+		return ansiLampFill
 	}
-
-	if shade < 0 {
-		shade = 0
-	}
-	if shade >= len(brass) {
-		shade = len(brass) - 1
-	}
-	return brass[shade]
+	return ansiLampOutline
 }
-
-// Rub is the hand on the lamp's belly.
-const Rub = "✋"
 
 // LampScene renders the lamp, its smoke, whatever a prayer is doing, and the
 // status text.
@@ -121,19 +125,19 @@ func LampScene(state contracts.SessionState, opts SceneOptions) []string {
 		frame = 0
 	}
 
-	elapsed, wishing := wishAge(state, opts.Now)
+	elapsed, wishing := effectAge(state, opts.Now)
 
-	// The lamp keeps smoking while it is being rubbed - and the rows must
-	// hold something in every frame anyway, or the scene loses height and the
-	// prompt underneath moves.
-	if !wishing || elapsed < rubSeconds {
+	// The plume is the lamp at rest. While a wish plays, the answer fills those
+	// rows instead - and it always fills them, because a row left empty costs
+	// the scene a line of height and moves the prompt underneath.
+	if !wishing {
 		drawPlume(g, frame, burning(phaseOf(state)))
 	}
 	for i, row := range lamp {
 		x := 0
 		for _, r := range row {
 			if r != ' ' {
-				g.paint(x, lampSmokeRows+i, r, shadeFor(i, x))
+				g.paint(x, lampSmokeRows+i, r, shadeFor(r))
 			}
 			x++
 		}
@@ -160,25 +164,67 @@ func LampHeight() int { return lampSmokeRows + len(lamp) }
 // what is published rather than redrawing it by hand.
 func LampRows() []string { return append([]string(nil), lamp...) }
 
-// wishAge reports how many whole seconds ago the prayer was, and whether the
-// effect is still running.
+// effectAge reports how many whole seconds ago the effect started, and whether
+// it is still running.
 //
 // Whole seconds, not the exact age: the status line re-runs on events as well
 // as on its timer, and a frame derived from a fractional age would redraw a
 // different picture twice within the same second.
-func wishAge(state contracts.SessionState, now time.Time) (int64, bool) {
-	if state.LastPrayerAt.IsZero() {
+func effectAge(state contracts.SessionState, now time.Time) (int64, bool) {
+	at, _, ok := effectStart(state)
+	if !ok {
 		return 0, false
 	}
-	elapsed := now.Unix() - state.LastPrayerAt.Unix()
+
+	elapsed := now.Unix() - at.Unix()
 	shows := int64(PrayerShows / time.Second)
 	return elapsed, elapsed >= 0 && elapsed < shows
 }
 
-// granted decides whether a wish works. The seed is the prayer, so the answer
-// holds for the whole effect instead of changing on every refresh.
+// effectStart returns the moment the current effect began, whether it was
+// asked for, and whether there is one at all.
+//
+// Two things can set it off. A prayer is asked for, and its answer is chance.
+// A turn ending is not asked for, and its answer is the truth: the work either
+// finished or it failed. The more recent of the two wins, so a prayer sent
+// during a turn is not overruled the instant the turn ends.
+//
+// Reacting to the turn is what makes this feel immediate. A slash command
+// costs a whole model turn before anything can be drawn; a hook records the
+// end of a turn straight away, and the status line has it within the second.
+func effectStart(state contracts.SessionState) (time.Time, bool, bool) {
+	prayer := state.LastPrayerAt
+
+	var turn time.Time
+	switch state.Phase {
+	case contracts.PhaseTurnCompleted, contracts.PhaseTurnFailed:
+		turn = state.UpdatedAt
+	}
+
+	switch {
+	case !prayer.IsZero() && prayer.After(turn):
+		return prayer, true, true
+	case !turn.IsZero():
+		return turn, false, true
+	}
+	return time.Time{}, false, false
+}
+
+// granted decides whether the lamp answers.
+//
+// A turn that finished is granted and one that failed is not - that is not a
+// wish, it is a report. Only a prayer is left to chance, and its seed is the
+// prayer itself, so the answer holds for the whole effect instead of changing
+// on every refresh.
 func granted(state contracts.SessionState) bool {
-	return effect.Hash01(uint64(state.LastPrayerAt.Unix()), 0, 0, "grant") < grantChance
+	at, asked, ok := effectStart(state)
+	if !ok {
+		return false
+	}
+	if !asked {
+		return state.Phase == contracts.PhaseTurnCompleted
+	}
+	return effect.Hash01(uint64(at.Unix()), 0, 0, "grant") < grantChance
 }
 
 // drawPlume lifts smoke off the spout. Fixed columns, varying density.
@@ -199,63 +245,95 @@ func drawPlume(g *grid, frame uint64, active bool) {
 	}
 }
 
-// drawWish plays the prayer: a hand on the belly first, then the answer. It
-// returns the status text to show while it runs.
+// drawWish plays the answer and returns the status text to show while it runs.
 func drawWish(g *grid, state contracts.SessionState, elapsed int64, frame uint64) string {
-	if elapsed < rubSeconds {
-		// The hand works back and forth across the belly.
-		x := 9 + int(elapsed%2)*3
-		g.text(x, lampSmokeRows+3, Rub)
-		return "PrayOps · RUBBING…"
-	}
-
 	if granted(state) {
-		drawGrantedSmoke(g, elapsed, frame)
+		drawHearts(g, elapsed, frame)
 		return "PrayOps · GRANTED"
 	}
-	drawSootSmoke(g, elapsed, frame)
+	drawBurst(g, elapsed, frame)
 	return "PrayOps · NOTHING"
 }
 
-// drawGrantedSmoke sends a gold ribbon up from the spout, leaning one way then
-// the other so it reads as a zigzag rather than a column.
-func drawGrantedSmoke(g *grid, elapsed int64, frame uint64) {
-	step := elapsed - rubSeconds
+// drawHearts lifts hearts out of the spout, spreading as they rise and
+// thinning as the wish settles.
+func drawHearts(g *grid, elapsed int64, frame uint64) {
+	shows := int64(PrayerShows / time.Second)
+	left := float64(shows-elapsed) / float64(shows)
+	count := int(10*left) + 1
 
-	for row := 0; row < lampSmokeRows; row++ {
-		// The higher the row, the further the ribbon has travelled, and the
-		// phase shifts with the frame so it appears to flow.
-		lean := int((step+int64(row))%2)*2 - 1
-		x := spoutTip + lean*(row+1)
+	placed := 0
+	for attempt := 0; attempt < 200 && placed < count; attempt++ {
+		row := int(effect.Hash01(frame, attempt, placed, "heartRow") * float64(lampSmokeRows))
 
-		g.paint(x, lampSmokeRows-1-row, '▒', ansiGold)
-		if row > 0 {
-			g.paint(x-lean, lampSmokeRows-1-row, '░', ansiGold)
+		// They drift up and out: the higher the row, the wider the scatter.
+		reach := 2 + row*3
+		x := spoutTip - reach + int(effect.Hash01(frame, attempt, placed, "heartX")*float64(reach*2+1))
+
+		if x < 0 || x >= g.width || g.cells[lampSmokeRows-1-row][x] != ' ' {
+			continue
+		}
+		g.paint(x, lampSmokeRows-1-row, Heart, ansiHeart)
+		placed++
+	}
+
+	fillEmptyRows(g, lampSmokeRows, Heart, ansiHeart)
+}
+
+// drawBurst throws a firework out of the spout: a core that flies apart into
+// sparks, wider and sparser every second.
+func drawBurst(g *grid, elapsed int64, frame uint64) {
+	radius := int(elapsed) + 1
+
+	// The core, so the first frame reads as a bang rather than a drizzle.
+	if elapsed == 0 {
+		for _, dx := range []int{-1, 0, 1} {
+			g.paint(spoutTip+dx, lampSmokeRows-1, '▓', ansiSoot)
 		}
 	}
 
-	// A spark at the mouth, so the ribbon is clearly leaving the lamp.
-	g.paint(spoutTip, lampSmokeRows-1, '▓', ansiGold)
-	_ = frame
-}
-
-// drawSootSmoke coughs a dark cloud out of the spout: dense at the mouth,
-// scattering outward and thinning as it goes.
-func drawSootSmoke(g *grid, elapsed int64, frame uint64) {
-	step := int(elapsed-rubSeconds) + 1
-
-	for row := 0; row < lampSmokeRows; row++ {
-		spread := step + row
-		for i := -spread; i <= spread; i++ {
-			// Not every cell: a solid block would read as a wall, not a cough.
-			if effect.Hash01(frame, row*32+i+16, 0, "soot") > 0.55 {
+	for i, spoke := range burstSpokes {
+		for r := 1; r <= radius; r++ {
+			// The tail thins out behind the head, so the burst looks like it is
+			// travelling rather than growing a solid shape.
+			if r < radius && effect.Hash01(frame, i*8+r, 0, "spark") > 0.4 {
 				continue
 			}
-			glyph := '▓'
-			if row > 0 || i < -1 || i > 1 {
-				glyph = '▒'
+
+			x := spoutTip + spoke[0]*r
+			y := lampSmokeRows - 1 + spoke[1]*r
+			if y < 0 || y >= lampSmokeRows {
+				continue
 			}
-			g.paint(spoutTip+i, lampSmokeRows-1-row, glyph, ansiSoot)
+
+			glyph := Spark
+			if r < radius {
+				glyph = '·'
+			}
+			g.paint(x, y, glyph, ansiSoot)
+		}
+	}
+
+	fillEmptyRows(g, lampSmokeRows, Spark, ansiSoot)
+}
+
+// fillEmptyRows puts one glyph on any of the top rows a scene left blank.
+//
+// A blank row is not a cosmetic problem: the host drops it, the scene loses a
+// line of height, and the prompt underneath jumps. Every effect that scatters
+// rather than drawing a fixed shape can leave one empty by chance, so they all
+// come through here.
+func fillEmptyRows(g *grid, rows int, glyph rune, ansi string) {
+	for y := 0; y < rows && y < len(g.cells); y++ {
+		empty := true
+		for _, r := range g.cells[y] {
+			if r != ' ' {
+				empty = false
+				break
+			}
+		}
+		if empty {
+			g.paint(spoutTip, y, glyph, ansi)
 		}
 	}
 }

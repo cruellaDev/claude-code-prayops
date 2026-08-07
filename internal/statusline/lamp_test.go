@@ -88,10 +88,10 @@ func TestTheLampPlumeNeverMoves(t *testing.T) {
 	}
 }
 
-// Rubbing first, then an answer, and the answer holds for the whole effect -
-// a wish that flickered between granted and not would read as a bug.
-func TestAWishRubsThenAnswersConsistently(t *testing.T) {
-	var flipped int
+// The answer comes at once and holds for the whole effect - a wish that
+// flickered between granted and not would read as a bug.
+func TestAWishAnswersAtOnceAndConsistently(t *testing.T) {
+	var failed int
 
 	for k := 0; k < 60; k++ {
 		state := praying(now.Add(time.Duration(k) * time.Second))
@@ -101,16 +101,10 @@ func TestAWishRubsThenAnswersConsistently(t *testing.T) {
 			at := state.LastPrayerAt.Add(time.Duration(second) * time.Second)
 			label := lampScene(t, state, at, 80)[LampHeight()]
 
-			switch {
-			case second < rubSeconds:
-				if !strings.Contains(label, "RUBBING") {
-					t.Fatalf("second %d of the wish says %q, want RUBBING", second, label)
-				}
-			case strings.Contains(label, "GRANTED"), strings.Contains(label, "NOTHING"):
-				answers = append(answers, label)
-			default:
+			if !strings.Contains(label, "GRANTED") && !strings.Contains(label, "NOTHING") {
 				t.Fatalf("second %d of the wish says %q", second, label)
 			}
+			answers = append(answers, label)
 		}
 
 		for _, answer := range answers[1:] {
@@ -119,13 +113,45 @@ func TestAWishRubsThenAnswersConsistently(t *testing.T) {
 			}
 		}
 		if strings.Contains(answers[0], "NOTHING") {
-			flipped++
+			failed++
 		}
 	}
 
 	// Both outcomes have to actually happen, or the chance is not a chance.
-	if flipped == 0 || flipped == 60 {
-		t.Fatalf("%d of 60 wishes failed - the outcome is not random", flipped)
+	if failed == 0 || failed == 60 {
+		t.Fatalf("%d of 60 wishes failed - the outcome is not random", failed)
+	}
+}
+
+// A granted wish rises as hearts; a failed one goes off like a firework.
+func TestTheTwoAnswersLookDifferent(t *testing.T) {
+	var hearts, sparks bool
+
+	for k := 0; k < 60 && !(hearts && sparks); k++ {
+		state := praying(now.Add(time.Duration(k) * time.Second))
+		scene := strings.Join(lampScene(t, state, state.LastPrayerAt.Add(time.Second), 80), "")
+
+		if granted(state) {
+			if !strings.ContainsRune(scene, Heart) {
+				t.Fatalf("a granted wish drew no hearts:\n%s", scene)
+			}
+			if strings.ContainsRune(scene, Spark) {
+				t.Fatalf("a granted wish drew sparks:\n%s", scene)
+			}
+			hearts = true
+			continue
+		}
+		if !strings.ContainsRune(scene, Spark) {
+			t.Fatalf("a failed wish drew no sparks:\n%s", scene)
+		}
+		if strings.ContainsRune(scene, Heart) {
+			t.Fatalf("a failed wish drew hearts:\n%s", scene)
+		}
+		sparks = true
+	}
+
+	if !hearts || !sparks {
+		t.Fatal("only one of the two answers ever happened")
 	}
 }
 
@@ -136,12 +162,76 @@ func TestTheWishEnds(t *testing.T) {
 	after := lampScene(t, state, now.Add(PrayerShows), 80)
 
 	label := after[LampHeight()]
-	for _, word := range []string{"RUBBING", "GRANTED", "NOTHING"} {
+	for _, word := range []string{"GRANTED", "NOTHING"} {
 		if strings.Contains(label, word) {
 			t.Fatalf("the wish is still showing %q after it ended", word)
 		}
 	}
-	if strings.Contains(strings.Join(after, ""), Rub) {
-		t.Fatal("the hand is still on the lamp after the wish ended")
+	joined := strings.Join(after, "")
+	if strings.ContainsRune(joined, Heart) || strings.ContainsRune(joined, Spark) {
+		t.Fatal("the answer is still on screen after the wish ended")
+	}
+}
+
+// A finished turn sets the lamp off by itself. A slash command costs a whole
+// model turn before anything can be drawn; the hook that records the end of a
+// turn does not, so this is the version that feels immediate.
+func TestTheLampAnswersAFinishedTurn(t *testing.T) {
+	for phase, want := range map[contracts.SessionPhase]string{
+		contracts.PhaseTurnCompleted: "GRANTED",
+		contracts.PhaseTurnFailed:    "NOTHING",
+	} {
+		state := working(time.Minute)
+		state.Phase = phase
+		state.UpdatedAt = now
+
+		if got := lampScene(t, state, now, 80)[LampHeight()]; !strings.Contains(got, want) {
+			t.Fatalf("a %s turn says %q, want %s", phase, got, want)
+		}
+
+		// And it is a report, not a wish: the same phase always says the same
+		// thing, however many times it happens.
+		for k := 1; k < 20; k++ {
+			state.UpdatedAt = now.Add(time.Duration(k) * time.Minute)
+			at := state.UpdatedAt.Add(time.Second)
+
+			if got := lampScene(t, state, at, 80)[LampHeight()]; !strings.Contains(got, want) {
+				t.Fatalf("turn %d of phase %s says %q, want %s", k, phase, got, want)
+			}
+		}
+	}
+}
+
+// The reaction is over as quickly as any other, so a session that ended an
+// hour ago is not still showering hearts.
+func TestAFinishedTurnStopsAnsweringAfterAWhile(t *testing.T) {
+	state := working(time.Minute)
+	state.Phase = contracts.PhaseTurnCompleted
+	state.UpdatedAt = now
+
+	label := lampScene(t, state, now.Add(PrayerShows), 80)[LampHeight()]
+	for _, word := range []string{"GRANTED", "NOTHING"} {
+		if strings.Contains(label, word) {
+			t.Fatalf("still answering %q long after the turn ended", word)
+		}
+	}
+}
+
+// A prayer sent during a turn is not overruled the instant the turn ends.
+func TestTheMoreRecentTriggerWins(t *testing.T) {
+	state := working(time.Minute)
+	state.Phase = contracts.PhaseTurnFailed
+	state.UpdatedAt = now
+	state.LastPrayerAt = now.Add(time.Second)
+
+	at, asked, ok := effectStart(state)
+	if !ok || !asked || !at.Equal(state.LastPrayerAt) {
+		t.Fatalf("effectStart = %v %v %v, want the prayer", at, asked, ok)
+	}
+
+	state.LastPrayerAt = now.Add(-time.Second)
+	at, asked, ok = effectStart(state)
+	if !ok || asked || !at.Equal(state.UpdatedAt) {
+		t.Fatalf("effectStart = %v %v %v, want the turn", at, asked, ok)
 	}
 }
