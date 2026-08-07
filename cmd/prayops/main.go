@@ -124,12 +124,86 @@ func runHook(args []string, stdin io.Reader) int {
 		}
 	}
 
+	// An update lands here rather than at the next session start. Most plugins
+	// are markdown and hooks.json, so /plugin update is the whole update; this
+	// one carries a binary that has to be put where the status line looks, and
+	// waiting for a new session made `already at the latest version` a lie
+	// about what was actually running.
+	replaceStaleRuntime(data)
+
 	if !failed {
 		// Doctor reads the recorded failure, so leaving one behind would keep
 		// reporting an installation as unhealthy long after it recovered.
 		clearHookError(stateDir)
 	}
 	return 0
+}
+
+// replaceStaleRuntime puts the plugin's binary in place when it is a different
+// version from the one running.
+//
+// It costs one small file read per hook, and it runs from inside the old
+// binary: the copy lands on the path this process was started from, so the
+// next hook - the next tool call - is the new one. Nothing here can fail
+// loudly, because a hook that complained about a version would interrupt the
+// session over a decoration.
+func replaceStaleRuntime(data string) {
+	root := os.Getenv("CLAUDE_PLUGIN_ROOT")
+	if root == "" || data == "" {
+		return
+	}
+
+	shipped := manifestVersion(filepath.Join(root, "runtime-manifest.json"))
+	if shipped == "" || shipped == version {
+		return
+	}
+
+	source := filepath.Join(root, "runtime",
+		fmt.Sprintf("%s_%s", runtime.GOOS, runtime.GOARCH), "prayops")
+	binary, err := os.ReadFile(source)
+	if err != nil {
+		return
+	}
+
+	// Write beside the target and rename, so the status line - which runs this
+	// path once a second - never catches a half written file.
+	staged := filepath.Join(data, "tmp", "prayops.hook")
+	if err := os.MkdirAll(filepath.Dir(staged), 0o755); err != nil {
+		return
+	}
+	if err := os.WriteFile(staged, binary, 0o755); err != nil {
+		return
+	}
+	if err := os.Rename(staged, filepath.Join(data, "bin", "prayops")); err != nil {
+		os.Remove(staged)
+		return
+	}
+
+	record, err := json.MarshalIndent(map[string]string{
+		"runtimeVersion": shipped,
+		"pluginVersion":  shipped,
+		"platform":       runtime.GOOS + "/" + runtime.GOARCH,
+		"source":         "plugin",
+	}, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(data, "runtime.json"), append(record, '\n'), 0o600)
+}
+
+// manifestVersion reads runtimeVersion out of a manifest, or "" if it cannot.
+func manifestVersion(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var manifest struct {
+		RuntimeVersion string `json:"runtimeVersion"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return ""
+	}
+	return manifest.RuntimeVersion
 }
 
 // statuslineInput is the allowlisted view of the status line payload. Claude
