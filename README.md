@@ -5,17 +5,33 @@
 Claude Code 상태줄에 향로가 놓입니다. 일하는 동안 향이 타고 연기가 오르며, 기도를 올리면 향로 주변에 기도가 잔뜩 뿌려졌다가 사그라듭니다.
 
 ```text
-     ░ ░    ░                          🙏 🙏   🙏         🙏
-  🙏   ▒                       🙏                 🙏   🙏 🙏
-      ░  🙏  ░                     🙏     🙏               🙏
-     ▕▏ ▕▏ ▕▏               🙏                               🙏
-   ▄▄▄▄▄▄▄▄▄▄▄▄▄
-  ▐▒▒▒▒▒▒▒▒▒▒▒▒▒▌           🙏                     🙏
-▐▌▟███████████████▙▐▌       🙏                  🙏
-  ▜█████████████▛                  🙏
-   ▝▀▀▀▀▀▀▀▀▀▀▀▘                                     🙏
-    █▘   █    ▝█      🙏                    🙏
-祈 PrayOps · WORKING · 香 64%
+⠀⠀⠀⠀⠀░ ▒ ░
+⠀⠀⠀⠀⠀▒ ▒ ▒
+⠀⠀⠀⠀⠀▪ ▪ ▪
+⠀⠀⠀⠀⠀▮ ▮ ▮
+⠀⠀⠀⠀⠀▮ ▮ ▮
+⠀⠀⠀⠀▗▄▄▄▄▄▖
+⠀▗▄▟███████▙▄▖
+⠀▝▀▜███████▛▀▘
+⠀⠀⠀⠀▝▀▀▀▀▀▘
+⠀⠀⠀⠀▝  ▀  ▘
+PrayOps · IDLE
+```
+
+`/pray`를 올리면:
+
+```text
+⠀⠀⠀⠀⠀▒🙏 ░ 🙏
+⠀⠀⠀⠀⠀▒🙏 ▒ 🙏     🙏
+⠀⠀⠀🙏🙏▪ ▪🙏  🙏 🙏
+⠀⠀⠀⠀⠀🙏▮🙏
+⠀⠀⠀⠀⠀▮ ▮ ▮  🙏 🙏  🙏
+⠀⠀⠀⠀🙏▄🙏▄▖🙏  🙏
+⠀▗▄▟🙏█████🙏🙏🙏  🙏
+⠀▝▀▜████🙏█▛▀▘
+⠀⠀⠀⠀▝▀▀▀🙏🙏     🙏🙏
+⠀⠀⠀⠀🙏 ▀  ▘       🙏
+PrayOps · WORKING · 100%
 ```
 
 별도 터미널을 열 필요가 없습니다. 설치하면 Claude Code 안에 바로 보입니다.
@@ -23,7 +39,7 @@ Claude Code 상태줄에 향로가 놓입니다. 일하는 동안 향이 타고 
 좁은 창에서는 마지막 한 줄로 물러납니다.
 
 ```text
-祈 WORKING 64%
+WORKING 100%
 ```
 
 ## 설치
@@ -49,12 +65,67 @@ Claude Code 상태줄에 향로가 놓입니다. 일하는 동안 향이 타고 
 그래서 "이 프로젝트에서만"은 설정이 아니라 런타임이 판단합니다:
 
 ```text
+prayops statusline scope                 지금 어떤 규칙이 걸려 있는지
 prayops statusline scope --only-here     이 프로젝트만
-prayops statusline scope --everywhere    모든 프로젝트 (기본값)
 prayops statusline scope --not-here      이 프로젝트만 제외
+prayops statusline scope --only-session  이 창만 (창을 닫으면 자동 해제)
+prayops statusline scope --off / --on    잠깐 끄기 / 켜기
+prayops statusline scope --everywhere    전부 해제 (기본값)
 ```
 
-상태줄 없이도 `/prayops:pray`는 대화창에 향로를 그립니다.
+`--only-session`은 프로젝트보다 좁습니다. 같은 저장소를 두 창에서 열었을 때 한쪽만
+켜는 건 이것으로만 됩니다. 창이 닫히면 SessionEnd 훅이 목록에서 지우므로, 죽은
+세션이 향로를 계속 숨기는 일은 없습니다.
+
+`--off`는 `uninstall`과 다릅니다. `uninstall`은 `settings.json`에서 설정 자체를
+지우고 이전 상태로 되돌리지만, `--off`는 설정과 위 선택을 남긴 채 그리지만
+않습니다. 껐다 켜면 원래 범위로 돌아옵니다.
+
+### 그림 고르기
+
+두 가지 중에 고를 수 있습니다.
+
+```text
+prayops statusline theme censer   향로 (기본값)
+prayops statusline theme lamp     램프
+prayops statusline theme holder   인센스 스틱 홀더
+prayops statusline theme          지금 어느 것인지
+```
+
+세 테마 다 **컨텍스트 잔량을 자기 재료로** 보여줍니다. 상태줄 끝의 `100%`가 그 숫자이고,
+Claude Code가 상태줄에 직접 보내주는 값입니다.
+
+| | 계기 | 턴 성공 | 턴 실패 |
+|---|---|---|---|
+| 향로 | 향이 짧아지고 연기가 그 자리를 채움 | 환한 빛이 퍼짐 | 어두운 그늘이 내려앉음 |
+| 램프 | 기름이 굽부터 차오름 | 빨간 하트 | 폭죽이 팡 |
+| 홀더 | 향 길이 | 연기가 빨갛게 | 연기가 회색으로 |
+
+**램프**는 주둥이에서 연기가 오릅니다. 턴이 성공으로 끝나면 빨간 하트가 피어오르고,
+실패하면 폭죽이 팡 터집니다.
+
+**인센스 스틱 홀더**는 장식이 아니라 **보고**입니다. 스틱 길이가 곧 진행률이라, 턴이
+오래 걸릴수록 향이 짧아지고 재가 쌓입니다. 타는 끝은 빨갛고, 연기는 그 지점을 따라
+왼쪽으로 옮겨 갑니다.
+
+세 테마 다 `/pray`로 직접 부르면 **70% 확률**로 성공/실패가 갈립니다. 턴이 끝나서
+저절로 터진 것은 확률이 아니라 진짜 결과입니다.
+
+```text
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀▒ ▒ ░
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀▒ ▒
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀▒
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀▄
+⠀⠀⠀⠀⠀⠀⠀⠀⠀███
+⠀▗▄▖   ▗███████▖▄▄▄▄▄▄▄▄▄▄▖
+⠀▐ ▌  ▟████████████████▛▀▘
+⠀⠀▀   ▜██████████▛▀▀▀▘
+⠀⠀⠀⠀⠀⠀⠀⠀▝▀█████▀▘
+⠀⠀⠀⠀⠀⠀⠀⠀▄▄▄███▄▄▄
+PrayOps · WORKING · 100%
+```
+
+상태줄 없이도 `/prayops:pray`는 대화창에 그려 줍니다.
 
 ## 사용
 
@@ -89,14 +160,15 @@ prayops statusline scope --not-here      이 프로젝트만 제외
 ```
 
 ```text
-Plugin       OK    0.1.0
-Runtime      OK    0.1.0
-Version      OK    0.1.0
+Binary       OK    darwin/arm64
+Plugin       OK    0.5.0
+Runtime      OK    0.5.0
+Version      OK    0.5.0
 State        OK    3 pending
 Hooks        OK    last event just now
 Status line  OK    installed by PrayOps
 Alias /pray  OK    not installed
-Watcher      OK    running
+Watcher      OK    not running
 Terminal     OK    truecolor
 ```
 
@@ -125,10 +197,10 @@ Terminal     OK    truecolor
 
 | 플랫폼 | 상태 |
 |---|---|
-| macOS arm64 · amd64 | v0.1 |
-| Linux amd64 · arm64 | v0.1 |
-| WSL2 | v0.1 (linux로 처리) |
-| native Windows | v0.2 예정 |
+| macOS arm64 · amd64 | 지원. 바이너리가 플러그인에 함께 배포됩니다 |
+| Linux amd64 · arm64 | 지원. 바이너리가 플러그인에 함께 배포됩니다 |
+| WSL2 | linux로 처리됩니다. 실기기 검증은 아직입니다 |
+| native Windows | 미지원 |
 
 ## 문제가 생기면
 
@@ -137,9 +209,10 @@ Terminal     OK    truecolor
 | 상태줄이 안 보임 | `prayops statusline status`로 설치 여부를, `prayops statusline scope`로 이 프로젝트가 범위에 있는지 확인 |
 | 상태줄이 `IDLE`에서 안 바뀜 | `/prayops:doctor`의 `Hooks` 줄. 이벤트가 기록되지 않으면 원인이 표시됩니다 |
 | `prayops watch`가 TTY 오류 | 파이프나 Claude Code Bash 도구가 아닌 실제 터미널에서 실행해야 합니다 |
-| 설치가 checksum 불일치로 실패 | 아무것도 설치되지 않았고 기존 런타임도 그대로입니다. 재시도하거나 릴리즈 페이지를 확인하세요 |
+| 향로가 안 보이는데 오류도 없음 | `prayops statusline scope`. `--only-session`이나 `--only-here`로 좁혀 둔 상태일 수 있습니다 |
 | 플러그인 업데이트 후 버전 불일치 | 새 세션을 시작하면 SessionStart 훅이 런타임을 갱신합니다 |
-| 제단 테두리가 깨져 보임 | ambiguous width 문자를 2칸으로 렌더하는 터미널 설정일 수 있습니다 |
+| 향로 줄이 왼쪽으로 밀려 보임 | 호스트가 앞 공백을 지운 것입니다. v0.5.0부터 지워지지 않는 문자로 채웁니다 |
+| 향로 모양이 깨져 보임 | ambiguous width 문자를 2칸으로 렌더하는 터미널 설정일 수 있습니다 |
 | 애니메이션을 원하지 않음 | `prayops watch --motion off` 또는 `NO_COLOR=1` |
 
 상태줄과 `/pray` 별칭은 설치 전 원본을 백업하며, `uninstall`로 정확히 되돌립니다.

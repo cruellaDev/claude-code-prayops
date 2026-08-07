@@ -112,6 +112,18 @@ func runHook(args []string, stdin io.Reader) int {
 		failed = true
 	}
 
+	// A window that narrowed the scope to itself must not go on narrowing it
+	// after it closes: the censer would be hidden everywhere with nothing to
+	// say why, which is the failure the scoping was built to replace.
+	if event.Type == contracts.EventSessionEnded && event.SessionID != "" {
+		if scope := userconfig.LoadScope(data); len(scope.Sessions) > 0 {
+			if err := userconfig.SaveScope(data, scope.RemoveSession(event.SessionID)); err != nil {
+				recordHookError(err)
+				failed = true
+			}
+		}
+	}
+
 	if !failed {
 		// Doctor reads the recorded failure, so leaving one behind would keep
 		// reporting an installation as unhealthy long after it recovered.
@@ -134,6 +146,31 @@ type statuslineInput struct {
 	Workspace struct {
 		ProjectDir string `json:"project_dir"`
 	} `json:"workspace"`
+
+	// Claude Code reports how much of the context window is left. The incense
+	// burns down by that rather than by a clock: a stick that shortens with
+	// the minutes is decoration, one that shortens with the context is a gauge
+	// - and the number was already on the line pretending to mean something.
+	ContextWindow struct {
+		Remaining *float64 `json:"remaining_percentage"`
+	} `json:"context_window"`
+}
+
+// remaining returns how full the stick is, or nil when the host said nothing -
+// in which case the scene falls back to the clock.
+func (in statuslineInput) remaining() *int {
+	if in.ContextWindow.Remaining == nil {
+		return nil
+	}
+
+	pct := int(*in.ContextWindow.Remaining)
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	return &pct
 }
 
 // project returns the directory the status line was invoked for.
@@ -155,6 +192,8 @@ func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 			return runStatuslineConfig(args, stdout, stderr)
 		case "scope":
 			return runStatuslineScope(args[1:], stdout, stderr)
+		case "theme":
+			return runStatuslineTheme(args[1:], stdout, stderr)
 		}
 	}
 
@@ -178,7 +217,7 @@ func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 
 	// Silence rather than an error: this is the user having chosen which
 	// projects show a censer, not a failure.
-	if !userconfig.LoadScope(data).Allows(in.project()) {
+	if !userconfig.LoadScope(data).Allows(in.project(), in.SessionID) {
 		return 0
 	}
 
@@ -195,6 +234,8 @@ func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		Columns: terminalColumns(),
 		Color:   os.Getenv("NO_COLOR") == "",
 		Motion:  os.Getenv("NO_COLOR") == "" && os.Getenv("PRAYOPS_MOTION") != "off",
+		Theme:   statusline.ThemeFor(userconfig.LoadTheme(data)),
+		Fuel:    in.remaining(),
 	}
 
 	if lines := statusline.Scene(state, opts); lines != nil {
@@ -211,6 +252,36 @@ func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	return 0
 }
 
+// runStatuslineTheme reports or changes which picture the status line draws.
+func runStatuslineTheme(args []string, stdout, stderr io.Writer) int {
+	data := pluginDataDir()
+	if data == "" {
+		fmt.Fprintln(stderr, "prayops: CLAUDE_PLUGIN_DATA is not set")
+		return 1
+	}
+
+	current := statusline.ThemeFor(userconfig.LoadTheme(data))
+	if len(args) == 0 {
+		fmt.Fprintf(stdout, "The status line draws the %s.\nChoose with: statusline theme censer | lamp | holder\n", current)
+		return 0
+	}
+
+	chosen := statusline.Theme(args[0])
+	switch chosen {
+	case statusline.ThemeCenser, statusline.ThemeLamp, statusline.ThemeHolder:
+	default:
+		fmt.Fprintf(stderr, "prayops: no theme called %q. There are three: censer, lamp, holder\n", args[0])
+		return 2
+	}
+
+	if err := userconfig.SaveTheme(data, string(chosen)); err != nil {
+		fmt.Fprintf(stderr, "prayops: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "The status line draws the %s now.\n", chosen)
+	return 0
+}
+
 // runStatuslineScope reports or changes which projects draw a censer.
 //
 // The status line setting itself has to live at user scope - Claude Code
@@ -218,7 +289,10 @@ func runStatusline(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 func runStatuslineScope(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("statusline scope", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	off := fs.Bool("off", false, "hide the censer everywhere, keeping the setting")
+	on := fs.Bool("on", false, "show the censer again")
 	only := fs.Bool("only-here", false, "draw the censer in this project alone")
+	onlySession := fs.Bool("only-session", false, "draw the censer in this window alone, until it closes")
 	everywhere := fs.Bool("everywhere", false, "draw the censer in every project")
 	drop := fs.Bool("not-here", false, "stop drawing the censer in this project")
 	cwd := fs.String("cwd", "", "the project to change, defaulting to the working directory")
@@ -239,19 +313,26 @@ func runStatuslineScope(args []string, stdout, stderr io.Writer) int {
 
 	scope := userconfig.LoadScope(data)
 	switch {
+	case *off:
+		scope.Paused = true
+	case *on:
+		scope.Paused = false
 	case *everywhere:
 		scope.Projects = nil
+		scope.Sessions = nil
+	case *onlySession:
+		session := os.Getenv("CLAUDE_CODE_SESSION_ID")
+		if session == "" {
+			fmt.Fprintln(stderr, "prayops: CLAUDE_CODE_SESSION_ID is not set, so this window cannot be named")
+			return 1
+		}
+		scope = scope.AddSession(session)
 	case *only:
 		scope = scope.Add(project)
 	case *drop:
 		scope = scope.Remove(project)
 	default:
-		if len(scope.Projects) == 0 {
-			fmt.Fprintln(stdout, "The censer is drawn in every project.")
-		} else {
-			fmt.Fprintf(stdout, "The censer is drawn in %d chosen project(s).\n", len(scope.Projects))
-			fmt.Fprintf(stdout, "Here: %v\n", scope.Allows(project))
-		}
+		fmt.Fprintln(stdout, describeScope(scope, project))
 		return 0
 	}
 
@@ -260,13 +341,34 @@ func runStatuslineScope(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	if len(scope.Projects) == 0 {
-		fmt.Fprintln(stdout, "The censer is now drawn in every project.")
-	} else {
-		fmt.Fprintf(stdout, "The censer is now drawn in %d chosen project(s). Here: %v\n",
-			len(scope.Projects), scope.Allows(project))
-	}
+	fmt.Fprintln(stdout, describeScope(scope, project))
 	return 0
+}
+
+// describeScope says what the scope is now, naming every rule in force.
+//
+// An earlier version reported "every project" whenever no project had been
+// chosen, which was a lie the moment a window had been: the narrowing was
+// real and the message said there was none.
+func describeScope(scope userconfig.Scope, project string) string {
+	if scope.Paused {
+		return "The censer is hidden. `statusline scope --on` shows it again."
+	}
+
+	var narrowed []string
+	if n := len(scope.Projects); n > 0 {
+		narrowed = append(narrowed, fmt.Sprintf("%d project(s)", n))
+	}
+	if n := len(scope.Sessions); n > 0 {
+		narrowed = append(narrowed, fmt.Sprintf("%d window(s)", n))
+	}
+	if len(narrowed) == 0 {
+		return "The censer is drawn everywhere."
+	}
+
+	return fmt.Sprintf("The censer is drawn in %s. Here: %v",
+		strings.Join(narrowed, " and "),
+		scope.Allows(project, os.Getenv("CLAUDE_CODE_SESSION_ID")))
 }
 
 // runStatuslineConfig installs, removes, or reports the user's status line

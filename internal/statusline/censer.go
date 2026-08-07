@@ -21,7 +21,6 @@ import (
 // the upper-left quadrant, so a row of them put the left foot outside the
 // pedestal and the middle foot a quarter cell off axis - ▝ ▀ ▘ mirrors.
 var censer = []string{
-	"     ▮ ▮ ▮     ",
 	"    ▗▄▄▄▄▄▖    ",
 	" ▗▄▟███████▙▄▖ ",
 	" ▝▀▜███████▛▀▘ ",
@@ -32,14 +31,16 @@ var censer = []string{
 // CenserWidth is the width of every row of the censer, in cells.
 const CenserWidth = 15
 
-// emberRow sits on the tips of the incense, above the censer. It is the one
-// warm thing in the scene, so it is the one thing drawn in red.
-const emberRow = 1
+// Ember is the lit tip of a stick of incense - the one warm thing in the
+// scene, and so the one thing drawn in red. Incense is the stick under it.
+const (
+	Ember   = '▪'
+	Incense = '▮'
+)
 
-// Ember is the lit tip of a stick of incense.
-const Ember = '▪'
-
-// smokeRows is how many rows of smoke rise above the embers.
+// smokeRows is the least number of rows of smoke. The sticks burn down into
+// their zone and the smoke takes whatever room they leave, so on a spent
+// context there is more smoke than this and never less.
 //
 // Two, so a puff can visibly climb from one to the other. One row could only
 // change density, which reads as still. Both rows always draw something: the
@@ -52,16 +53,82 @@ const smokeRows = 2
 // incense all share one set of columns.
 var smokeColumns = []int{5, 7, 9}
 
-// Prayer is the emoji a prayer appears as.
-const Prayer = "🙏"
+// The incense stands in a zone three rows deep. It burns down through them as
+// the context fills, and the smoke takes the room it leaves - which is what
+// keeps the scene the same height however short the sticks are.
+//
+// Ash heaped in the bowl was tried first. It gauged more finely, fourteen
+// cells against four, and it read as speckle on the object rather than as
+// incense burning down.
+const stickZone = 3
+
+// Stub is what is left standing once a stick has burned away.
+const Stub = '·'
+
+// drawIncense stands the sticks as tall as the context allows, tips them with
+// embers, and leaves stubs when there is nothing left.
+//
+// It returns the row the tops are on, so the smoke knows where to start.
+func drawIncense(g *grid, remaining int) int {
+	// Round up, so a context that is nearly spent still shows a stub of stick
+	// rather than jumping to nothing.
+	height := (remaining*stickZone + 99) / 100
+	if height > stickZone {
+		height = stickZone
+	}
+
+	bottom := smokeRows + stickZone - 1
+	top := bottom - height + 1
+
+	for _, column := range smokeColumns {
+		if height == 0 {
+			g.set(column, bottom, Stub)
+			continue
+		}
+		g.paint(column, top, Ember, ansiEmberLit)
+		for y := top + 1; y <= bottom; y++ {
+			g.set(column, y, Incense)
+		}
+	}
+
+	if height == 0 {
+		return bottom
+	}
+	return top
+}
 
 // PrayerShows is how long after a prayer the emoji keep appearing. The status
 // line refreshes about once a second, so this is also roughly the frame count.
 const PrayerShows = 5 * time.Second
 
-// MaxPrayers is how many emoji can be on screen at once. A prayer should feel
-// like a lot of them, not a polite few.
-const MaxPrayers = 44
+// MaxAura is how many cells of light or shade can be on screen at once.
+const MaxAura = 16
+
+// Theme names the picture the status line draws.
+type Theme string
+
+const (
+	// ThemeCenser is the incense burner: prayers pile onto it as offerings.
+	ThemeCenser Theme = "censer"
+	// ThemeLamp is the genie lamp: a prayer rubs it, and the wish either
+	// works or coughs soot.
+	ThemeLamp Theme = "lamp"
+	// ThemeHolder is the incense stick holder: the stick burns down as the
+	// turn runs, so the picture reports rather than decorates.
+	ThemeHolder Theme = "holder"
+)
+
+// ThemeFor resolves a stored name, falling back to the censer so an unknown
+// or empty value draws something rather than nothing.
+func ThemeFor(name string) Theme {
+	switch Theme(name) {
+	case ThemeLamp:
+		return ThemeLamp
+	case ThemeHolder:
+		return ThemeHolder
+	}
+	return ThemeCenser
+}
 
 // SceneOptions control one rendered scene.
 type SceneOptions struct {
@@ -69,6 +136,23 @@ type SceneOptions struct {
 	Columns int
 	Color   bool
 	Motion  bool
+	Theme   Theme
+
+	// Fuel is how much of the context window is left, 0 to 100. Nil means the
+	// host did not say, and nil is the zero value on purpose: an int would
+	// make "unset" and "empty" the same thing, and every caller that forgot
+	// the field would draw a stick that had already burned away.
+	Fuel *int
+}
+
+// fuel resolves the gauge, falling back to the clock when the host reported
+// nothing. Without the fallback a host that sends no context figure would
+// leave every stick full for ever.
+func fuel(state contracts.SessionState, opts SceneOptions) int {
+	if opts.Fuel != nil {
+		return *opts.Fuel
+	}
+	return Remaining(state, opts.Now)
 }
 
 // Scene renders the censer, its smoke, any prayers, and the status text.
@@ -77,6 +161,13 @@ type SceneOptions struct {
 // the same picture, which keeps the status line from flickering between two
 // refreshes that happen to land close together.
 func Scene(state contracts.SessionState, opts SceneOptions) []string {
+	switch opts.Theme {
+	case ThemeLamp:
+		return LampScene(state, opts)
+	case ThemeHolder:
+		return HolderScene(state, opts)
+	}
+
 	columns := opts.Columns
 	if columns <= 0 {
 		columns = DefaultColumns
@@ -87,8 +178,7 @@ func Scene(state contracts.SessionState, opts SceneOptions) []string {
 		return nil
 	}
 
-	height := smokeRows + emberRow + len(censer)
-	g := newGrid(columns, height)
+	g := newGrid(columns, SceneHeight())
 
 	// One frame per second. Anything finer would be invisible: the status line
 	// cannot refresh faster than that.
@@ -97,14 +187,12 @@ func Scene(state contracts.SessionState, opts SceneOptions) []string {
 		frame = 0
 	}
 
-	drawSmoke(g, frame, burning(phaseOf(state)))
-	for _, column := range smokeColumns {
-		g.set(column, smokeRows, Ember)
-	}
+	top := drawIncense(g, fuel(state, opts))
+	drawSmoke(g, top, frame, burning(phaseOf(state)))
 	for i, row := range censer {
-		g.text(0, smokeRows+emberRow+i, row)
+		g.text(0, smokeRows+stickZone+i, row)
 	}
-	drawPrayers(g, state, opts.Now, columns)
+	drawAura(g, state, opts.Now, frame)
 
 	lines := g.lines(opts.Color)
 	return append(lines, Render(state, Options{
@@ -119,110 +207,116 @@ func Scene(state contracts.SessionState, opts SceneOptions) []string {
 // of the eye, on a line the user is trying to type under. They climb instead:
 // which column is high and which is low changes with the frame, so the smoke
 // moves without the shape wandering.
-func drawSmoke(g *grid, frame uint64, active bool) {
-	// Both rows always hold exactly three puffs, on the columns the sticks
-	// stand in. Only the density changes.
-	//
-	// Two earlier versions moved the puffs instead - first onto random rows,
-	// then one column left or right. Both made the plume's footprint change
-	// every second directly above the line the user types on, which is the
-	// complaint that started all of this. Density alone is visible without
-	// anything shifting: nothing to track, nothing to wobble.
+func drawSmoke(g *grid, top int, frame uint64, active bool) {
 	dense := 0.25
 	if active {
 		dense = 0.55
 	}
 
-	for i, column := range smokeColumns {
-		g.set(column, smokeRows-1, '▒')
-
-		glyph := '░'
-		if effect.Hash01(frame, i, 0, "puff") < dense {
-			glyph = '▒'
+	// Every row above the tips, however many that is. A short stick leaves
+	// more room and the plume simply fills it, which is why the scene keeps
+	// its height as the incense burns down.
+	for row := 0; row < top; row++ {
+		for i, column := range smokeColumns {
+			glyph := '░'
+			if effect.Hash01(frame, row*8+i, 0, "puff") < dense {
+				glyph = '▒'
+			}
+			g.set(column, row, glyph)
 		}
-		g.set(column, 0, glyph)
 	}
 }
 
-// drawPrayers throws the emoji out of the censer and lets them fly.
+// Light and shade, rather than a crowd of emoji.
 //
-// The trick is that the seed is the prayer, not the frame. Each emoji keeps
-// its own direction and speed for the whole five seconds, so it travels
-// outward frame by frame instead of teleporting to a fresh random spot every
-// refresh - a cloud of dots that merely rearranges reads as noise, while the
-// same dots moving away from a point read as a burst.
+// The burst used to be prayer emoji flying outward. It read as confetti: busy,
+// and it said the same thing whatever had happened. Light and shade say which
+// it was without a word - and they carry it in weight as well as in colour, so
+// they still read on a terminal whose palette is nothing like this one.
+const (
+	ansiHalo  = "\x1b[38;5;222m"
+	ansiShade = "\x1b[38;5;240m"
+)
+
+// Halo is the light a finished turn throws around the censer; Shade is what a
+// failed one leaves.
 //
-// They land anywhere, the censer included. Reserving its block kept the
-// drawing tidy and made the burst look fenced off; offerings piling onto the
-// censer is the point.
-func drawPrayers(g *grid, state contracts.SessionState, now time.Time, columns int) {
-	if state.LastPrayerAt.IsZero() {
+// Neither set may borrow a glyph from the smoke. The first version used ░ for
+// light and ▒ for shade, which are exactly what the incense is already making
+// - so the two were told apart by colour alone, and on a terminal with a
+// different palette they were not told apart at all.
+var (
+	haloGlyphs  = []rune{'·', '˚'}
+	shadeGlyphs = []rune{'▓', '▚'}
+)
+
+// drawAura surrounds the censer with light or with shadow.
+//
+// Light spreads: it starts close and travels outward, thinning as it goes.
+// Shade does the opposite - it presses in around the censer and stays there,
+// which is what makes the two obvious at a glance even in one frame.
+func drawAura(g *grid, state contracts.SessionState, now time.Time, frame uint64) {
+	elapsed, active := effectAge(state, now)
+	if !active {
 		return
 	}
-	// Whole seconds, not the exact age: Claude Code re-runs the status line on
-	// events as well as on its timer, and a position derived from a fractional
-	// age would redraw a different picture twice within the same second.
-	elapsed := now.Unix() - state.LastPrayerAt.Unix()
+
 	shows := int64(PrayerShows / time.Second)
-	if elapsed < 0 || elapsed >= shows {
-		return
+	progress := float64(elapsed) / float64(shows)
+	good := granted(state)
+
+	count := int(float64(MaxAura)*(1-progress)) + 1
+	glyphs := shadeGlyphs
+	ansi := ansiShade
+	if good {
+		glyphs = haloGlyphs
+		ansi = ansiHalo
 	}
 
-	// One burst, one seed. Two prayers a second apart throw different sprays.
-	seed := uint64(state.LastPrayerAt.Unix())
-	age := float64(elapsed)
-	progress := (age + 1) / float64(shows)
+	placed := 0
+	for attempt := 0; attempt < 400 && placed < count; attempt++ {
+		y := int(effect.Hash01(frame, attempt, placed, "auraY") * float64(len(g.cells)))
 
-	rows := len(g.cells)
-	taken := make(map[int]bool, MaxPrayers*2)
+		// Light travels outward as it goes; shade never leaves the censer.
+		// Both start against the censer. Light then reaches further out every
+		// second; shade never does.
+		far := CenserWidth + 8
+		if good {
+			far = CenserWidth + 8 + int(progress*float64(g.width-CenserWidth))
+		}
+		x := int(effect.Hash01(frame, attempt, placed, "auraX") * float64(far))
 
-	for i := 0; i < MaxPrayers; i++ {
-		// Each one burns out at its own moment, so the crowd thins unevenly
-		// instead of all of them stepping back together.
-		if age > 1+effect.Hash01(seed, i, 0, "life")*float64(shows-1) {
+		if x < 0 || x >= g.width || y < 0 || y >= len(g.cells) {
+			continue
+		}
+		// Never inside the censer. Filling the gaps between its own glyphs
+		// reads as static on the object rather than an aura around it.
+		if x < CenserWidth && y >= smokeRows+stickZone {
+			continue
+		}
+		if g.cells[y][x] != ' ' {
 			continue
 		}
 
-		// The scene is six rows and most of a terminal across, so the travel
-		// that reads as a burst is sideways. Vertically they only drift up a
-		// row or so; anything more flies out of the top and is simply lost.
-		reach := effect.Hash01(seed, i, 1, "reach") * float64(columns-CenserWidth)
-		if effect.Hash01(seed, i, 2, "side") < 0.35 {
-			reach = -reach / 3 // a few go the other way, past the censer
-		}
-
-		x := int(float64(CenserWidth)/2 + reach*progress)
-		y := int(effect.Hash01(seed, i, 3, "row")*float64(rows) - age/2)
-		if y < 0 {
-			y = 0
-		}
-
-		if x < 0 || y >= rows || x+prayerCells > g.width {
-			continue
-		}
-		// Two emoji in the same place would leave half a glyph behind, so
-		// prayers give way to each other - and to nothing else.
-		if taken[y*g.width+x] || taken[y*g.width+x+1] {
-			continue
-		}
-
-		g.text(x, y, Prayer)
-		taken[y*g.width+x] = true
-		taken[y*g.width+x+1] = true
+		glyph := glyphs[int(effect.Hash01(frame, attempt, placed, "auraG")*float64(len(glyphs)))]
+		g.paint(x, y, glyph, ansi)
+		placed++
 	}
 }
-
-// prayerCells is how many terminal cells the prayer emoji occupies.
-const prayerCells = 2
 
 // grid is a fixed block of cells the scene is composed into.
 type grid struct {
 	cells [][]rune
 	width int
+
+	// tint colours individual cells. A whole row cannot be wrapped: the ember
+	// is red and the censer beneath it is not, and the lamp's smoke changes
+	// colour while the lamp does not.
+	tint map[int]string
 }
 
 func newGrid(width, height int) *grid {
-	g := &grid{width: width, cells: make([][]rune, height)}
+	g := &grid{width: width, cells: make([][]rune, height), tint: map[int]string{}}
 	for y := range g.cells {
 		g.cells[y] = make([]rune, width)
 		for x := range g.cells[y] {
@@ -239,6 +333,15 @@ func (g *grid) set(x, y int, r rune) {
 	g.cells[y][x] = r
 }
 
+// paint sets a cell and the colour it is drawn in.
+func (g *grid) paint(x, y int, r rune, ansi string) {
+	if y < 0 || y >= len(g.cells) || x < 0 || x >= g.width {
+		return
+	}
+	g.cells[y][x] = r
+	g.tint[y*g.width+x] = ansi
+}
+
 // text writes a string, advancing by each rune's display width. The second
 // cell of a wide rune is marked so nothing else is drawn into it.
 func (g *grid) text(x, y int, s string) {
@@ -246,6 +349,17 @@ func (g *grid) text(x, y int, s string) {
 		g.set(x, y, r)
 		if narrow.RuneWidth(r) == 2 {
 			g.set(x+1, y, covered)
+		}
+		x += max(narrow.RuneWidth(r), 1)
+	}
+}
+
+// paintText writes a string in one colour, cell by cell, so the escapes never
+// wrap a space the row's indent depends on.
+func (g *grid) paintText(x, y int, s string, ansi string) {
+	for _, r := range s {
+		if r != ' ' {
+			g.paint(x, y, r, ansi)
 		}
 		x += max(narrow.RuneWidth(r), 1)
 	}
@@ -268,29 +382,74 @@ func (g *grid) free(x, y, width int) bool {
 	return true
 }
 
-// lines renders the grid. The ember is the one cell that carries its own
-// colour, so the escape is written around that rune alone rather than around
-// the row - anything wider would tint the censer too.
+// lines renders the grid. Colour is written around single cells rather than
+// around a row: the ember is red while the censer under it is not, and the
+// lamp's smoke changes colour while the lamp does not.
 func (g *grid) lines(color bool) []string {
 	out := make([]string, 0, len(g.cells))
-	for _, row := range g.cells {
+	for y, row := range g.cells {
 		var b strings.Builder
-		for _, r := range row {
-			switch {
-			case r == covered:
-			case r == Ember && color:
-				b.WriteString(ansiEmberLit)
-				b.WriteRune(r)
-				b.WriteString(ansiReset)
-			default:
-				b.WriteRune(r)
+
+		// Runs of one colour open and close once. Per cell would work too, but
+		// the lamp is two dozen cells of the same brass and the status line
+		// redraws every second.
+		open := ""
+		for x, r := range row {
+			if r == covered {
+				continue
 			}
+
+			// An unpainted cell keeps the terminal's own foreground, which is
+			// the only colour guaranteed to contrast with its background.
+			want := ""
+			if color {
+				want = g.tint[y*g.width+x]
+			}
+			if want != open {
+				if open != "" {
+					b.WriteString(ansiReset)
+				}
+				b.WriteString(want)
+				open = want
+			}
+			b.WriteRune(r)
 		}
+		if open != "" {
+			b.WriteString(ansiReset)
+		}
+
 		// Trimming has to ignore the escapes, which never end a row anyway:
-		// only spaces do, and TrimRight sees them plainly.
-		out = append(out, strings.TrimRight(b.String(), " "))
+		// only spaces do, and a space is never painted, so TrimRight sees them
+		// plainly.
+		out = append(out, indent(strings.TrimRight(b.String(), " ")))
 	}
 	return out
+}
+
+// blank is a braille cell with no dots raised. It occupies one column and
+// draws nothing, which is what a space does - except that it is not a space.
+//
+// Claude Code strips the leading whitespace from every row of a status line.
+// With ordinary spaces the censer arrived with each row flush against the
+// left edge, so the shape collapsed into a stack of bars no matter how
+// carefully the art was centred.
+const blank = '\u2800'
+
+// indent replaces a row's leading spaces with blanks that survive the strip.
+// Only the leading run: spaces inside a row are kept as they are, and those
+// are not touched.
+func indent(row string) string {
+	runes := []rune(row)
+
+	for i, r := range runes {
+		if r != ' ' {
+			for j := 0; j < i; j++ {
+				runes[j] = blank
+			}
+			return string(runes)
+		}
+	}
+	return row
 }
 
 // phaseOf resolves an unset phase to idle, the same way Render does.
@@ -300,3 +459,16 @@ func phaseOf(state contracts.SessionState) contracts.SessionPhase {
 	}
 	return state.Phase
 }
+
+// CenserRows returns the censer's rows, for callers that check the art
+// against what is published rather than redrawing it by hand.
+func CenserRows() []string { return append([]string(nil), censer...) }
+
+// SceneHeight is how many rows the scene draws above the status text. A
+// published copy has to match it exactly: comparing only the last rows lets a
+// dropped row slide the whole comparison along and match anyway.
+func SceneHeight() int { return smokeRows + stickZone + len(censer) }
+
+// Indent is exported for the same reason: a published copy of the art has to
+// carry the same leading blanks the status line emits.
+func Indent(row string) string { return indent(row) }

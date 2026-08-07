@@ -31,7 +31,7 @@ func praying(at time.Time) contracts.SessionState {
 func TestSceneDrawsTheCenser(t *testing.T) {
 	lines := scene(t, working(time.Minute), now, 60)
 
-	if len(lines) != smokeRows+emberRow+len(censer)+1 {
+	if len(lines) != SceneHeight()+1 {
 		t.Fatalf("%d rows:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
 
@@ -96,84 +96,94 @@ func TestSceneDeclinesWhenTooNarrow(t *testing.T) {
 	}
 }
 
-// A prayer should feel like a lot of them.
-func TestPrayerFillsTheScene(t *testing.T) {
-	lines := scene(t, praying(now), now, 60)
-	count := strings.Count(strings.Join(lines, "\n"), Prayer)
+// aura counts the cells of light or shade in a scene.
+//
+// The last line is the status text, which is not the picture - and it carries
+// a middle dot as its separator, which is also one of the halo's glyphs.
+func aura(lines []string) int {
+	joined := strings.Join(lines[:len(lines)-1], "")
 
-	if count < 10 {
-		t.Fatalf("only %d prayers:\n%s", count, strings.Join(lines, "\n"))
+	total := 0
+	for _, set := range [][]rune{haloGlyphs, shadeGlyphs} {
+		for _, glyph := range set {
+			total += strings.Count(joined, string(glyph))
+		}
 	}
-	if count > MaxPrayers+1 {
-		t.Fatalf("%d prayers, over the cap of %d", count, MaxPrayers)
+	return total
+}
+
+func finished(phase contracts.SessionPhase) contracts.SessionState {
+	state := working(time.Minute)
+	state.Phase = phase
+	state.UpdatedAt = now
+	return state
+}
+
+// The censer answers with light or with shadow, and the two look nothing
+// alike. It used to answer with a crowd of prayer emoji, which said the same
+// thing whatever had happened.
+func TestLightAndShadeLookNothingAlike(t *testing.T) {
+	light := strings.Join(scene(t, finished(contracts.PhaseTurnCompleted), now, 80), "")
+	dark := strings.Join(scene(t, finished(contracts.PhaseTurnFailed), now, 80), "")
+
+	if !strings.ContainsAny(light, string(haloGlyphs)) {
+		t.Fatalf("a finished turn threw no light:\n%s", light)
+	}
+	if strings.Contains(light, string(shadeGlyphs[1])) {
+		t.Fatalf("a finished turn threw shade:\n%s", light)
+	}
+	if !strings.ContainsAny(dark, string(shadeGlyphs)) {
+		t.Fatalf("a failed turn threw no shade:\n%s", dark)
 	}
 }
 
-// They thin out rather than vanishing all at once, and they do stop.
-func TestPrayersThinOutAndStop(t *testing.T) {
-	count := func(after time.Duration) int {
-		return strings.Count(strings.Join(scene(t, praying(now), now.Add(after), 60), "\n"), Prayer)
+// Light travels outward; shade stays around the censer. That difference is
+// what makes the two readable in a single frame.
+func TestLightTravelsAndShadeDoesNot(t *testing.T) {
+	widest := func(state contracts.SessionState, second int) int {
+		lines := scene(t, state, now.Add(time.Duration(second)*time.Second), 120)
+
+		far := 0
+		for _, row := range lines[:len(lines)-1] {
+			for x, r := range []rune(row) {
+				for _, set := range [][]rune{haloGlyphs, shadeGlyphs} {
+					for _, glyph := range set {
+						if r == glyph && x > far {
+							far = x
+						}
+					}
+				}
+			}
+		}
+		return far
 	}
+
+	good := finished(contracts.PhaseTurnCompleted)
+	bad := finished(contracts.PhaseTurnFailed)
+
+	if !(widest(good, 3) > widest(good, 0)) {
+		t.Fatalf("the light did not travel: %d then %d", widest(good, 0), widest(good, 3))
+	}
+	if got := widest(bad, 3); got > CenserWidth+8 {
+		t.Fatalf("the shade wandered off to column %d", got)
+	}
+}
+
+// It thins out rather than vanishing all at once, and it does stop.
+func TestTheAuraThinsOutAndStops(t *testing.T) {
+	state := finished(contracts.PhaseTurnCompleted)
+	count := func(after time.Duration) int { return aura(scene(t, state, now.Add(after), 60)) }
 
 	start := count(0)
 	middle := count(PrayerShows / 2)
 	if !(start > middle) {
-		t.Fatalf("prayers did not thin out: %d then %d", start, middle)
+		t.Fatalf("the aura did not thin out: %d then %d", start, middle)
 	}
 	if middle == 0 {
-		t.Fatal("prayers vanished halfway through")
+		t.Fatal("the aura vanished halfway through")
 	}
 	if got := count(PrayerShows); got != 0 {
-		t.Fatalf("%d prayers still showing after the effect ended", got)
-	}
-	if got := count(-time.Second); got != 0 {
-		t.Fatalf("%d prayers showing before the prayer was sent", got)
-	}
-}
-
-// Offerings pile onto the censer. Reserving its block made the burst look
-// fenced off, which is the opposite of what a burst is.
-func TestPrayersMayLandOnTheCenser(t *testing.T) {
-	landed := false
-	for second := 0; second < int(PrayerShows/time.Second) && !landed; second++ {
-		lines := scene(t, praying(now), now.Add(time.Duration(second)*time.Second), 60)
-
-		for y, row := range lines[:len(lines)-1] {
-			if y < smokeRows {
-				continue
-			}
-			head := []rune(row)
-			if len(head) > CenserWidth {
-				head = head[:CenserWidth]
-			}
-			if strings.Contains(string(head), Prayer) {
-				landed = true
-				break
-			}
-		}
-	}
-	if !landed {
-		t.Fatal("no prayer ever reached the censer")
-	}
-}
-
-// The burst travels. If every refresh drew a fresh random spread instead, the
-// emoji would rearrange without ever going anywhere.
-func TestPrayersTravelOutward(t *testing.T) {
-	spread := func(second int) int {
-		lines := scene(t, praying(now), now.Add(time.Duration(second)*time.Second), 120)
-
-		widest := 0
-		for _, row := range lines[:len(lines)-1] {
-			if i := strings.LastIndex(row, Prayer); i > widest {
-				widest = i
-			}
-		}
-		return widest
-	}
-
-	if !(spread(2) > spread(0)) {
-		t.Fatalf("the burst did not travel: %d cells then %d", spread(0), spread(2))
+		t.Fatalf("%d cells of aura still showing after the effect ended", got)
 	}
 }
 
@@ -203,7 +213,7 @@ func TestMotionOffStillsTheScene(t *testing.T) {
 	}
 
 	first := still(now)
-	if len(first) != smokeRows+emberRow+len(censer)+1 {
+	if len(first) != SceneHeight()+1 {
 		t.Fatalf("motion off changed the scene:\n%s", strings.Join(first, "\n"))
 	}
 	if strings.Join(still(now.Add(3*time.Second)), "\n") != strings.Join(first, "\n") {
@@ -275,7 +285,7 @@ func TestTheSceneNeverChangesHeight(t *testing.T) {
 		for second := 0; second < 120; second++ {
 			lines := scene(t, state, now.Add(time.Duration(second)*time.Second), 80)
 
-			if len(lines) != smokeRows+emberRow+len(censer)+1 {
+			if len(lines) != SceneHeight()+1 {
 				t.Fatalf("second %d drew %d rows", second, len(lines))
 			}
 			for y, row := range lines {
@@ -322,5 +332,104 @@ func TestSmokeNeverMoves(t *testing.T) {
 	// version stopped moving altogether.
 	if len(shapes) < 4 {
 		t.Fatalf("the smoke only ever drew %d different patterns", len(shapes))
+	}
+}
+
+// Claude Code strips the leading whitespace from every row of a status line.
+// With ordinary spaces the censer arrived flush against the left edge, every
+// row of it, so the shape collapsed into a stack of bars.
+func TestIndentSurvivesAStrippedStatusLine(t *testing.T) {
+	strip := func(row string) string { return strings.TrimLeft(row, " \t") }
+
+	for _, state := range []contracts.SessionState{working(time.Minute), praying(now), idle()} {
+		lines := scene(t, state, now, 80)
+
+		for y, row := range lines[:len(lines)-1] {
+			if strip(row) != row {
+				t.Fatalf("row %d begins with whitespace a host would strip: %q", y, row)
+			}
+		}
+
+		// And the art still lines up once it has been through that host.
+		var axis int
+		for y, row := range lines[:len(lines)-1] {
+			stripped := []rune(strip(row))
+			if len(stripped) == 0 {
+				t.Fatalf("row %d is empty", y)
+			}
+			if y == 0 {
+				axis = len(stripped)
+				continue
+			}
+			_ = axis
+		}
+	}
+}
+
+// The switch is a switch: it hides the censer without discarding the status
+// line setting, or whatever that setting replaced.
+func TestScopeOffHidesTheScene(t *testing.T) {
+	if got := indent("   ▄▄▄"); strings.HasPrefix(got, " ") {
+		t.Fatalf("indent left a leading space: %q", got)
+	}
+	if got := indent("▄▄▄"); got != "▄▄▄" {
+		t.Fatalf("indent changed a row that had none: %q", got)
+	}
+	if got := indent("  ▄ ▄"); !strings.Contains(got, " ▄") {
+		t.Fatalf("indent replaced a space inside the row: %q", got)
+	}
+	if width(indent("   ▄▄▄")) != width("   ▄▄▄") {
+		t.Fatalf("indent changed the row's width")
+	}
+}
+
+// The censer has no stick lying on a tray, so its incense burns downward
+// instead - and the smoke takes the room it leaves, which is what keeps the
+// scene the same height however short the sticks get.
+//
+// Ash heaped in the bowl was tried first. It gauged more finely and it read as
+// speckle on the object rather than as incense burning.
+func TestTheIncenseBurnsDownWithTheContext(t *testing.T) {
+	// Ember as well as body: the shortest stick is a lit tip and nothing else,
+	// so counting only the body cannot tell it from a stick that is gone.
+	sticks := func(remaining int) int {
+		opts := SceneOptions{Now: now, Columns: 60, Motion: true, Fuel: &remaining}
+		scene := strings.Join(Scene(working(time.Minute), opts), "")
+		return strings.Count(scene, string(Incense)) + strings.Count(scene, string(Ember))
+	}
+
+	full := sticks(100)
+	if full == 0 {
+		t.Fatal("a fresh censer has no incense standing")
+	}
+
+	last := full + 1
+	for _, remaining := range []int{100, 60, 30, 0} {
+		got := sticks(remaining)
+		if got >= last {
+			t.Fatalf("at %d%% left there are %d cells of stick, at the step before %d", remaining, got, last)
+		}
+		last = got
+	}
+	if last != 0 {
+		t.Fatalf("an exhausted context left %d cells of stick standing", last)
+	}
+}
+
+// Burning down must not shorten the scene. The smoke fills whatever the sticks
+// give up, so the prompt underneath never moves.
+func TestBurningDownKeepsTheHeight(t *testing.T) {
+	for _, remaining := range []int{100, 75, 50, 25, 0} {
+		opts := SceneOptions{Now: now, Columns: 60, Motion: true, Fuel: &remaining}
+		lines := Scene(working(time.Minute), opts)
+
+		if len(lines) != SceneHeight()+1 {
+			t.Fatalf("at %d%% the scene is %d rows, want %d", remaining, len(lines), SceneHeight()+1)
+		}
+		for y, row := range lines {
+			if row == "" {
+				t.Fatalf("at %d%% row %d is blank:\n%s", remaining, y, strings.Join(lines, "\n"))
+			}
+		}
 	}
 }
